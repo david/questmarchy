@@ -57,6 +57,7 @@ example from a key binding.
 
 - The Realms (projects) and Quests tabs switch lists. Tab switches them from
   the keyboard. The panel reopens on the last tab used.
+- A flag marks each realm and a sword each quest, as on their tabs.
 - Type to search both lists. While you search, the tabs give way to the
   matching realms, then the matching quests. Every word typed must appear
   in the name, and Tab does nothing.

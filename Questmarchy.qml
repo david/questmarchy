@@ -522,18 +522,11 @@ Panel {
       anchors.centerIn: parent
       spacing: Style.space(8)
 
-      // The icons are drawn on a 24-unit grid with a margin around them, so
-      // they get a box a little larger than the agents panel's glyphs.
-      Item {
+      // A little larger than the agents panel's glyphs.
+      GridIcon {
         anchors.verticalCenter: parent.verticalCenter
-        width: Math.round(Style.font.heading * 1.25)
-        height: width
-
-        Loader {
-          anchors.centerIn: parent
-          sourceComponent: tile.icon
-          scale: parent.width / 24
-        }
+        size: Style.font.heading
+        icon: tile.icon
       }
 
       Text {
@@ -556,6 +549,33 @@ Panel {
     }
   }
 
+  Component {
+    id: realmIcon
+    FlagIcon { color: root.dim }
+  }
+
+  Component {
+    id: questIcon
+    SwordIcon { color: root.dim }
+  }
+
+  // An icon drawn on a 24-unit grid, scaled so that it looks about as large
+  // as a glyph of the given font size: the grid leaves a margin around it.
+  component GridIcon: Item {
+    id: gridIcon
+    property Component icon: null
+    property real size: Style.font.body
+
+    width: Math.round(size * 1.25)
+    height: width
+
+    Loader {
+      anchors.centerIn: parent
+      sourceComponent: gridIcon.icon
+      scale: gridIcon.width / 24
+    }
+  }
+
   component EntryRow: CursorSurface {
     id: row
     property var entry: null
@@ -573,9 +593,20 @@ Panel {
       onClicked: root.activate(row.rowIndex)
     }
 
+    // A flag for a project and a sword for a quest, as on their tabs, sized
+    // and colored like the network panel's signal icons.
+    GridIcon {
+      id: rowIcon
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      size: Style.font.title
+      icon: row.entry && row.entry.group === "projects" ? realmIcon : questIcon
+    }
+
     Column {
       id: lines
-      anchors.left: parent.left
+      anchors.left: rowIcon.right
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.space(10)
