@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "david.questmarchy",
+  "name": "Questmarchy",
+  "version": "0.1.0",
+  "author": "David Leal",
+  "description": "Search your quests from the bar and open one",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Questmarchy.qml"
+  },
+  "barWidget": {
+    "displayName": "Questmarchy",
+    "description": "Search your quests and open one",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

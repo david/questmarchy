@@ -1,0 +1,11 @@
+{
+  "tooltip": "Quests",
+  "search": "Search realms and quests",
+  "projects": "Realms",
+  "quests": "Quests",
+  "loading": "Loading…",
+  "noProjects": "No realms found",
+  "noQuests": "No quests found",
+  "noMatches": "No matching realms or quests",
+  "refreshFailed": "Couldn't refresh the lists"
+}
