@@ -47,8 +47,8 @@ The shell keeps a plugin's compiled QML until it restarts, so run
 `omarchy restart shell` after changing a QML file. Load errors appear only in
 `journalctl --user -t omarchy-shell`.
 
-`assets/sword.svg` is the icon's source art. `SwordIcon.qml` holds a copy of
-its path data.
+`assets/sword.svg` and `assets/flag.svg` are the icons' source art.
+`SwordIcon.qml` and `FlagIcon.qml` hold copies of their path data.
 
 ## License
 

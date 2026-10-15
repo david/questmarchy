@@ -232,7 +232,7 @@ Panel {
     open: root.opened
     focusTarget: panel.loadedContent
     contentWidth: panel.fittedContentWidth(Style.space(340))
-    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(460))
+    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(560))
 
     content: FocusScope {
       property alias search: search
@@ -242,31 +242,58 @@ Panel {
       Column {
         id: column
         width: parent.width
-        spacing: Style.spacing.md
+        spacing: Style.space(12)
 
-        TextField {
-          id: search
+        // The sword, then the search field in the rest of the row, like the
+        // icon and title of a first-party panel's header.
+        Item {
           width: parent.width
-          focus: true
-          foreground: root.foreground
-          placeholderText: strings.t("search")
-          onTextChanged: root.query = text
-          Keys.onPressed: function(event) { root.handleKey(event, search) }
+          implicitHeight: Math.max(sword.height, search.implicitHeight)
+
+          SwordIcon {
+            id: sword
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            color: root.foreground
+          }
+
+          TextField {
+            id: search
+            anchors.left: sword.right
+            anchors.leftMargin: Style.space(14)
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            focus: true
+            foreground: root.foreground
+            placeholderText: strings.t("search")
+            onTextChanged: root.query = text
+            Keys.onPressed: function(event) { root.handleKey(event, search) }
+          }
         }
 
-        ButtonGroup {
-          visible: !root.searching
-          focusable: false
+        PanelSeparator {
           foreground: root.foreground
-          fontFamily: root.fontFamily
-          value: root.tab
-          options: [
-            { value: "projects", label: strings.t("projects") },
-            { value: "quests", label: strings.t("quests") }
-          ]
-          onChanged: function(value) {
-            root.tab = value
-            search.forceActiveFocus()
+        }
+
+        // Two tabs that share the row's width.
+        Row {
+          id: tabs
+          visible: !root.searching
+          width: parent.width
+          spacing: Style.space(10)
+          // Keeps the list clear of the tabs, on top of the column spacing.
+          bottomPadding: Style.space(8)
+
+          TabTile {
+            width: (tabs.width - tabs.spacing) / 2
+            value: "projects"
+            icon: Component { FlagIcon { color: Commons.Color.accent } }
+          }
+
+          TabTile {
+            width: (tabs.width - tabs.spacing) / 2
+            value: "quests"
+            icon: Component { SwordIcon { color: Commons.Color.accent } }
           }
         }
 
@@ -294,19 +321,18 @@ Panel {
           delegate: Column {
             id: rowItem
             required property var modelData
+            required property int index
             width: ListView.view.width
 
-            Text {
+            PanelSectionHeader {
               visible: !!rowItem.modelData.header
               width: parent.width
-              leftPadding: Style.space(10)
-              topPadding: Style.space(4)
-              bottomPadding: Style.space(2)
-              textFormat: Text.PlainText
-              text: rowItem.modelData.header || ""
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              // Space the second group's header from the rows above it.
+              topPadding: Math.ceil(fontSize * 0.15) + (rowItem.index > 0 ? Style.space(10) : 0)
+              bottomPadding: Style.space(4)
+              text: (rowItem.modelData.header || "").toUpperCase()
+              foreground: root.foreground
+              fontFamily: root.fontFamily
             }
 
             EntryRow {
@@ -318,6 +344,58 @@ Panel {
           }
         }
       }
+    }
+  }
+
+  // A tab drawn like the agents panel's starter tiles: an accent icon and a
+  // bold label on a faint fill, tinted with the accent while selected.
+  component TabTile: Rectangle {
+    id: tile
+    property string value: ""
+    property Component icon: null
+    readonly property bool selected: root.tab === value
+
+    implicitHeight: tileBody.implicitHeight + Style.space(20)
+    radius: Style.cornerRadius
+    color: selected ? Util.alpha(Commons.Color.accent, 0.14)
+      : Util.alpha(root.foreground, tileMouse.containsMouse ? 0.09 : 0.05)
+
+    Row {
+      id: tileBody
+      anchors.centerIn: parent
+      spacing: Style.space(8)
+
+      // The icons are drawn on a 24-unit grid with a margin around them, so
+      // they get a box a little larger than the agents panel's glyphs.
+      Item {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.round(Style.font.heading * 1.25)
+        height: width
+
+        Loader {
+          anchors.centerIn: parent
+          sourceComponent: tile.icon
+          scale: parent.width / 24
+        }
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: strings.t(tile.value)
+        color: tile.selected ? Commons.Color.accent : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: true
+      }
+    }
+
+    MouseArea {
+      id: tileMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.tab = tile.value
     }
   }
 
