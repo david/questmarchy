@@ -49,3 +49,7 @@ The shell keeps a plugin's compiled QML until it restarts, so run
 
 `assets/sword.svg` is the icon's source art. `SwordIcon.qml` holds a copy of
 its path data.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
