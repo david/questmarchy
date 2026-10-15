@@ -7,5 +7,6 @@
   "noProjects": "No realms found",
   "noQuests": "No quests found",
   "noMatches": "No matching realms or quests",
-  "refreshFailed": "Couldn't refresh the lists"
+  "refreshFailed": "Couldn't refresh the lists",
+  "placesFailed": "Couldn't reach {places}"
 }

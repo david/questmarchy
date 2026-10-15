@@ -6,11 +6,14 @@ import qs.Commons as Commons
 import qs.Ui
 
 // A sword in the bar that opens a list of projects or quests, in two tabs,
-// most recently active first. Searching lists the matches from both. The lists come from
-// `quest-window -l`, through a cache file that the instance on every monitor
-// watches. Choosing a project runs `quest-window <project>`, which opens the
-// agent in the project root, and choosing a quest runs
-// `quest-window <project> <slug>`; either focuses the window if it is open.
+// most recently active first. Searching lists the matches from both. The
+// projects are those with a quests directory in the places the settings list,
+// directories on a host or on this computer. The lists come from
+// `quest-window -l <place>...`, through a cache file that the instance on every
+// monitor watches. Choosing a project runs `quest-window -p <place> <project>`,
+// which opens the agent in the project root, and choosing a quest runs
+// `quest-window -p <place> <project> <slug>`; either focuses the window if it
+// is open.
 Panel {
   id: root
   manageIpc: false
@@ -20,10 +23,41 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string cachePath:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/questmarchy/quests.json"
+  property string hostname: "localhost"
 
-  // [{name, updated}] and [{project, slug, updated}], most recently active first.
+  // The settings' places, [{host, path}] with no host for this computer, as
+  // {arg, label, failedLabel}: the place as quest-window takes it,
+  // [<host>:]<path>, the name of its computer, and how a failure to list it is
+  // reported. Places that could not be passed to quest-window are left out.
+  readonly property var places: {
+    var list = setting("places", null)
+    if (!Array.isArray(list)) list = [{ path: "~/Projects" }]
+    var places = []
+    list.forEach(function(place) {
+      if (!place || typeof place.path !== "string" || !/^[^\t\n]+$/.test(place.path)) return
+      var host = typeof place.host === "string" ? place.host : ""
+      if (!/^[A-Za-z0-9._-]*$/.test(host)) return
+      var arg = (host ? host + ":" : "") + place.path
+      if (places.some(function(known) { return known.arg === arg })) return
+      places.push({ arg: arg, label: host || hostname, failedLabel: host || place.path })
+    })
+    return places
+  }
+  readonly property var placesByArg: {
+    var byArg = {}
+    places.forEach(function(place) { byArg[place.arg] = place })
+    return byArg
+  }
+  // Whether the places are on more than one computer, so that entries name
+  // theirs.
+  readonly property bool showComputers: places.some(function(place) { return place.label !== places[0].label })
+
+  // [{place, name, updated}] and [{place, project, slug, updated}], most
+  // recently active first, and the places the last refresh could not list.
+  // They can hold places that the settings no longer list.
   property var projects: []
   property var quests: []
+  property var failedPlaces: []
   property bool refreshing: false
   property bool refreshFailed: false
   // "projects" or "quests". Kept between openings.
@@ -34,11 +68,21 @@ Panel {
   readonly property bool searching: query.trim() !== ""
   // Each entry has a title, an optional second line, its group ("projects"
   // or "quests"), and the quest-window arguments that open it.
-  readonly property var projectEntries: projects.map(function(project) {
-    return { title: project.name, subtitle: "", group: "projects", args: [project.name] }
+  readonly property var projectEntries: projects.filter(listed).map(function(project) {
+    return {
+      title: project.name,
+      subtitle: showComputers ? placesByArg[project.place].label : "",
+      group: "projects",
+      args: ["-p", project.place, project.name]
+    }
   })
-  readonly property var questEntries: quests.map(function(quest) {
-    return { title: quest.slug, subtitle: quest.project, group: "quests", args: [quest.project, quest.slug] }
+  readonly property var questEntries: quests.filter(listed).map(function(quest) {
+    return {
+      title: quest.slug,
+      subtitle: quest.project + (showComputers ? " · " + placesByArg[quest.place].label : ""),
+      group: "quests",
+      args: ["-p", quest.place, quest.project, quest.slug]
+    }
   })
   // The active tab's entries or, while searching, the projects and then the
   // quests that match.
@@ -61,6 +105,12 @@ Panel {
   }
   readonly property string status: {
     if (refreshFailed) return strings.t("refreshFailed")
+    var failed = []
+    failedPlaces.forEach(function(arg) {
+      var place = placesByArg[arg]
+      if (place && failed.indexOf(place.failedLabel) === -1) failed.push(place.failedLabel)
+    })
+    if (failed.length > 0) return strings.t("placesFailed").replace("{places}", failed.join(", "))
     if (searching) return matches.length === 0 ? strings.t("noMatches") : ""
     if (matches.length === 0) {
       if (refreshing) return strings.t("loading")
@@ -78,6 +128,7 @@ Panel {
     refresh()
     Qt.callLater(function() { if (panel.loadedContent) panel.loadedContent.forceActiveFocus() })
   }
+  onPlacesChanged: if (opened) refresh()
   onQueryChanged: cursorIndex = 0
   onTabChanged: cursorIndex = 0
   onMatchesChanged: cursorIndex = Math.max(0, Math.min(cursorIndex, matches.length - 1))
@@ -110,21 +161,65 @@ Panel {
     })
   }
 
-  function load(text) {
+  // Whether a project or quest is in one of the settings' places.
+  function listed(entry) {
+    return placesByArg.hasOwnProperty(entry.place)
+  }
+
+  // Most recently active first, then by the given fields.
+  function newestFirst(fields) {
+    return function(a, b) {
+      if (a.updated !== b.updated) return (b.updated || 0) - (a.updated || 0)
+      for (var i = 0; i < fields.length; i++) {
+        if (a[fields[i]] !== b[fields[i]]) return a[fields[i]] < b[fields[i]] ? -1 : 1
+      }
+      return 0
+    }
+  }
+
+  // The lists in quest-window's JSON or the cache's, as {projects, quests,
+  // failed}, without malformed entries; null when the text holds no lists.
+  function parseLists(text) {
     var data = null
     try { data = JSON.parse(text) } catch (e) {}
-    var projects = data && Array.isArray(data.projects) ? data.projects : []
-    var quests = data && Array.isArray(data.quests) ? data.quests : []
-    root.projects = projects.filter(function(project) {
-      return project && typeof project.name === "string"
-    })
-    root.quests = quests.filter(function(quest) {
-      return quest && typeof quest.project === "string" && typeof quest.slug === "string"
-    })
+    if (!data || !Array.isArray(data.projects) || !Array.isArray(data.quests)) return null
+    var named = function(value) { return typeof value === "string" && value !== "" }
+    return {
+      projects: data.projects.filter(function(project) {
+        return project && named(project.place) && named(project.name)
+      }),
+      quests: data.quests.filter(function(quest) {
+        return quest && named(quest.place) && named(quest.project) && named(quest.slug)
+      }),
+      failed: Array.isArray(data.failed) ? data.failed.filter(named) : []
+    }
+  }
+
+  function load(text) {
+    var lists = parseLists(text) || { projects: [], quests: [], failed: [] }
+    projects = lists.projects
+    quests = lists.quests
+    failedPlaces = lists.failed
+  }
+
+  // Takes the lists from a refresh, with the last lists of the places it
+  // could not list, and writes them to the cache for the instances on the
+  // other monitors.
+  function finishRefresh(text) {
+    var lists = parseLists(text)
+    refreshFailed = !lists
+    if (!lists) return
+    var failed = function(entry) { return lists.failed.indexOf(entry.place) !== -1 }
+    lists.projects = lists.projects.concat(projects.filter(failed)).sort(newestFirst(["name", "place"]))
+    lists.quests = lists.quests.concat(quests.filter(failed)).sort(newestFirst(["project", "slug", "place"]))
+    projects = lists.projects
+    quests = lists.quests
+    failedPlaces = lists.failed
+    cache.setText(JSON.stringify(lists) + "\n")
   }
 
   function refresh() {
-    if (refresher.running) return
+    if (refresher.running || places.length === 0) return
     refreshing = true
     refresher.running = true
     watchdog.restart()
@@ -173,29 +268,37 @@ Panel {
     directory: Qt.resolvedUrl("i18n")
   }
 
-  // Refreshes reload it too: a watch set up before the file existed misses
-  // its creation.
+  // Written whole, so watchers never read a partial list, and only after a
+  // refresh that listed something, so a failed one keeps the last lists.
   FileView {
     id: cache
     path: root.cachePath
     watchChanges: true
+    atomicWrites: true
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.load(text())
   }
 
-  // Writes through a temporary file, so watchers never read a partial list
-  // and a failed refresh keeps the last list.
+  FileView {
+    path: "/etc/hostname"
+    printErrors: false
+    onLoaded: if (text().trim() !== "") root.hostname = text().trim()
+  }
+
+  // Makes the cache's directory for finishRefresh to write in.
   Process {
     id: refresher
-    command: ["bash", "-lc",
-      'mkdir -p "${1%/*}" && quest-window -l >"$1.$$" && mv "$1.$$" "$1" || { rm -f "$1.$$"; exit 1; }',
-      "bash", root.cachePath]
+    command: ["bash", "-lc", 'mkdir -p "${1%/*}" && shift && exec quest-window -l "$@"', "bash", root.cachePath]
+      .concat(root.places.map(function(place) { return place.arg }))
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.finishRefresh(text)
+    }
     onExited: function(exitCode) {
       watchdog.stop()
       root.refreshing = false
-      root.refreshFailed = exitCode !== 0
-      if (exitCode === 0) cache.reload()
+      if (exitCode !== 0) root.refreshFailed = true
     }
   }
 
