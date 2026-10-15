@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# quest-window: open the kitty window for a project, or for one of its quests,
+# or focus that window when it is already open. A project lives in a place: a
+# directory of projects on a host, or on this computer. Each window attaches to
+# its own Herdr session there. With -l, list the projects and quests in some
+# places. The Questmarchy bar widget runs it from the plugin folder; see
+# README.md there.
+set -euo pipefail
+
+default_place='~/Projects'
+place=$default_place
+dry_run=
+
+usage() {
+  cat <<EOF
+Usage: quest-window [-n] [-p <place>] <project> [<slug>]
+       quest-window -l [<place>...]
+
+Open the window for a project's root, or for its quest <slug>.
+
+A place is [<host>:]<path>, a directory of projects on <host>, or on this
+computer when there is no host or <host> is this computer's name. A relative
+<path> starts at the home directory. The default is $default_place.
+
+  -p  the place of the project
+  -n  print what would be done instead of doing it
+  -l  print the projects and quests in the places as JSON, most recently
+      active first
+EOF
+}
+
+fail() {
+  echo "quest-window: $*" >&2
+  # Run from a key binding there is no terminal to print to.
+  [[ -t 2 ]] || notify-send "quest-window" "$*" 2>/dev/null || true
+  exit 1
+}
+
+# Set host and path from a place, leaving host empty for this computer. Fails
+# for a place that could not be passed safely to the shell running an action.
+parse_place() {
+  if [[ $1 =~ ^([^:/]+):(.*)$ ]]; then
+    host=${BASH_REMATCH[1]} path=${BASH_REMATCH[2]}
+  else
+    host= path=$1
+  fi
+  [[ ${host%%.*} == "$(uname -n | cut -d. -f1)" || $host == localhost ]] && host=
+  [[ -z $host || $host =~ ^[A-Za-z0-9._-]+$ ]] && [[ -n $path && $path != *[$'\t\n']* ]]
+}
+
+# Run bash in the home directory on the host, or here when it is empty, with
+# the script on standard input. The remaining arguments go to bash: its
+# options, then -s -- and the script's arguments. Forwardings are cleared so
+# the host's configured tunnels are not opened.
+on_host() {
+  local host=$1
+  shift
+  if [[ -z $host ]]; then
+    (cd && bash "$@")
+  else
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes "$host" bash "${@@Q}"
+  fi
+}
+
+# Print "<project><TAB><TAB><time>" for each project in the place with a
+# quests directory, followed by "<project><TAB><slug><TAB><time>" for each of
+# its active quests. <time> is when the project root or the quest was last
+# active, in seconds since the epoch: the newest change to a Claude Code
+# transcript started there or, for a quest, to its records.
+list_place() {
+  on_host "$1" -s -- "$2" <<'EOF'
+shopt -s nullglob
+path=$1
+case $path in "~") path=$HOME ;; "~/"*) path=$HOME/${path#"~/"} ;; esac
+cd -- "$path" || exit
+# Claude Code keeps the transcripts of a directory under its physical path,
+# with every character other than a letter or digit replaced by a hyphen.
+root=$(pwd -P)
+transcript_times() {
+  local dir=$root/$1
+  find "$HOME/.claude/projects/${dir//[^A-Za-z0-9]/-}" -maxdepth 1 -name '*.jsonl' -printf '%T@\n'
+}
+newest() { sort -rn | head -n1 | cut -d. -f1; }
+for quests in */quests/; do
+  project=${quests%%/*}
+  time=$(transcript_times "$project" 2>/dev/null | newest)
+  printf '%s\t\t%s\n' "$project" "$time"
+  for record in "$quests"*/QUEST.md; do
+    quest=${record%/QUEST.md}
+    time=$({
+      find "$quest" -mindepth 1 \( -name .git -o -name worktrees -o -name local-data \) -prune \
+        -o -type f -printf '%T@\n'
+      transcript_times "$quest"
+    } 2>/dev/null | newest)
+    printf '%s\t%s\t%s\n' "$project" "${quest##*/}" "$time"
+  done
+done
+EOF
+}
+
+# List all the places at once. Print each line that list_place prints for a
+# place after "<place><TAB>", and the place alone when it could not be listed.
+list_places() {
+  local listed i line
+  local -a pids=()
+  listed=$(mktemp -d)
+  for i in "${!places[@]}"; do
+    { parse_place "${places[i]}" && list_place "$host" "$path"; } >"$listed/$i" 2>/dev/null &
+    pids+=("$!")
+  done
+  for i in "${!places[@]}"; do
+    if wait "${pids[i]}"; then
+      while IFS= read -r line; do
+        printf '%s\t%s\n' "${places[i]}" "$line"
+      done <"$listed/$i"
+    else
+      printf '%s\n' "${places[i]}"
+    fi
+  done
+  rm -rf "$listed"
+}
+
+# Names that could not be passed safely to the shell running an action.
+names_jq='
+  def project: test("^[A-Za-z0-9._-]+$");
+  def slug: test("^[a-z0-9]+(-[a-z0-9]+)*$");
+'
+
+# Create the Herdr session on the host with its workspace in the given
+# directory, and start Claude Code there, unless the session already exists. A
+# session that herdr --remote creates opens in the home directory instead. The
+# shell is a login shell, whose profile puts Herdr on PATH wherever it is
+# installed.
+create_session() {
+  on_host "$1" -l -s -- "$2" "$3" <<'EOF'
+set -eu
+session=$1 dir=$2
+case $dir in "~/"*) dir=$HOME/${dir#"~/"} ;; esac
+command -v herdr >/dev/null || { echo "herdr is not on PATH on $(uname -n)" >&2; exit 1; }
+# An existing session, running or stopped, keeps its own workspaces.
+herdr session list | awk -v s="$session" 'NR > 1 && $1 == s { found = 1 } END { exit !found }' && exit 0
+[ -d "$dir" ] || { echo "no directory $dir" >&2; exit 1; }
+cd "$dir"
+dir=$PWD
+setsid -f herdr --session "$session" server >/dev/null 2>&1 </dev/null
+export HERDR_SESSION=$session
+for _ in $(seq 50); do
+  if created=$(herdr workspace create --cwd "$dir" --focus 2>/dev/null); then
+    pane=$(jq -r .result.root_pane.pane_id <<<"$created")
+    # Start the agent once the shell has drawn its prompt, that is once the
+    # pane stops changing, without holding up the window. Herdr types the
+    # agent's command whenever the shell is running, and a shell still
+    # starting can drop it, so a start that times out is tried again. Herdr
+    # refuses a pane whose shell has started something, so a retry never
+    # types into the agent.
+    setsid -f bash -c '
+      last=
+      for _ in $(seq 50); do
+        sleep 0.2
+        screen=$(herdr pane read "$1" 2>/dev/null) || continue
+        [ -n "${screen//[[:space:]]/}" ] && [ "$screen" = "$last" ] && break
+        last=$screen
+      done
+      for _ in 1 2 3; do
+        code=$(herdr agent start claude --kind claude --pane "$1" --timeout 8000 2>&1 | jq -r ".error.code // \"ok\"")
+        [ "$code" = timeout ] || break
+      done
+    ' _ "$pane" </dev/null >/dev/null 2>&1
+    exit 0
+  fi
+  sleep 0.1
+done
+echo "could not start the session" >&2
+exit 1
+EOF
+}
+
+# Turn the list into {projects: [{place, name, updated}], quests: [{place,
+# project, slug, updated}], failed: [place]}, the first two most recently
+# active first, leaving out unsafe names. A project was last active when its
+# root or any of its quests was. failed holds the places that could not be
+# listed.
+list_json() {
+  jq -R -s "$names_jq"'
+    [split("\n")[] | select(. != "") | split("\t")]
+    | [.[] | select(length == 1) | .[0]] as $failed
+    | [.[] | select(length > 1)
+        | {place: .[0], project: .[1], slug: (.[2] // ""), updated: ((.[3] // "") | tonumber? // 0)}
+        | select((.project | project) and (.slug == "" or (.slug | slug)))]
+    | map(select(.slug != "")) as $quests
+    | {
+        projects: [.[] | select(.slug == "") | . as $root
+          | {place, name: .project,
+             updated: ([.updated, ($quests[] | select(.place == $root.place and .project == $root.project) | .updated)] | max)}]
+          | sort_by(-.updated, .name, .place),
+        quests: $quests | sort_by(-.updated, .project, .slug, .place),
+        failed: $failed
+      }'
+}
+
+list=
+while getopts nlp:h opt; do
+  case $opt in
+    n) dry_run=1 ;;
+    l) list=1 ;;
+    p) place=$OPTARG ;;
+    h) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [[ -n $list ]]; then
+  places=("$@")
+  (( ${#places[@]} > 0 )) || places=("$default_place")
+  # The caller reports the places that failed: the bar widget shows them in
+  # its panel.
+  list_places | list_json
+  exit
+fi
+
+if (( $# < 1 || $# > 2 )); then
+  usage >&2
+  exit 2
+fi
+
+project=$1
+slug=${2:-}
+
+parse_place "$place" || fail "not a place: $place"
+[[ $project =~ ^[A-Za-z0-9._-]+$ ]] || fail "not a project name: $project"
+[[ -z $slug || $slug =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "not a quest slug: $slug"
+
+machine=${host:-$(uname -n)}
+session=$project${slug:+-$slug}
+# Omarchy tags TUI.* windows as terminals, so Super+V pastes in them. Without
+# the tag it sends Ctrl+V, which Herdr takes as its image paste, dropping text.
+class=TUI.questmarchy.$machine.$project${slug:+.$slug}
+dir=${path%/}/$project${slug:+/quests/$slug}
+
+address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class == $class) | .address' | head -n1)
+
+if [[ -n $address ]]; then
+  command=(hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })")
+else
+  command=(setsid uwsm-app -- kitty --class "$class" herdr ${host:+--remote "$host"} --session "$session")
+fi
+
+if [[ -n $dry_run ]]; then
+  [[ -n $address ]] || echo "would create the session $session in $dir on $machine, unless it exists"
+  echo "would run: ${command[*]}"
+elif [[ -n $address ]]; then
+  "${command[@]}" >/dev/null
+else
+  error=$(create_session "$host" "$session" "$dir" 2>&1) || fail "could not create the session $session on $machine: $error"
+  exec "${command[@]}"
+fi

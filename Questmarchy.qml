@@ -9,11 +9,11 @@ import qs.Ui
 // most recently active first. Searching lists the matches from both. The
 // projects are those with a quests directory in the places the settings list,
 // directories on a host or on this computer. The lists come from
-// `quest-window -l <place>...`, through a cache file that the instance on every
-// monitor watches. Choosing a project runs `quest-window -p <place> <project>`,
-// which opens the agent in the project root, and choosing a quest runs
-// `quest-window -p <place> <project> <slug>`; either focuses the window if it
-// is open.
+// `quest-window -l <place>...`, in this plugin's bin folder, through a cache
+// file that the instance on every monitor watches. Choosing a project runs
+// `quest-window -p <place> <project>`, which opens the agent in the project
+// root, and choosing a quest runs `quest-window -p <place> <project> <slug>`;
+// either focuses the window if it is open.
 Panel {
   id: root
   manageIpc: false
@@ -23,6 +23,8 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string cachePath:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/questmarchy/quests.json"
+  readonly property string questWindow:
+    decodeURIComponent(Qt.resolvedUrl("bin/quest-window").toString().replace(/^file:\/\//, ""))
   property string hostname: "localhost"
 
   // The settings' places, [{host, path}] with no host for this computer, as
@@ -233,7 +235,7 @@ Panel {
   function activate(index) {
     var entry = matches[index]
     if (!entry) return
-    Util.execArgv(["quest-window"].concat(entry.args))
+    Util.execArgv(["bash", questWindow].concat(entry.args))
     close()
   }
 
@@ -289,8 +291,8 @@ Panel {
   // Makes the cache's directory for finishRefresh to write in.
   Process {
     id: refresher
-    command: ["bash", "-lc", 'mkdir -p "${1%/*}" && shift && exec quest-window -l "$@"', "bash", root.cachePath]
-      .concat(root.places.map(function(place) { return place.arg }))
+    command: ["bash", "-lc", 'mkdir -p "${1%/*}" && script=$2 && shift 2 && exec bash "$script" -l "$@"',
+      "bash", root.cachePath, root.questWindow].concat(root.places.map(function(place) { return place.arg }))
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.finishRefresh(text)
