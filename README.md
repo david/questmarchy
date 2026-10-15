@@ -12,8 +12,9 @@ instead.
 
 - The Omarchy shell. Tested with Omarchy 4.0.0.alpha.
 - On this computer: [Herdr](https://herdr.dev) and `jq`.
-- Where the projects live: Claude Code, Herdr on a login shell's `PATH`,
-  and projects laid out as `<path>/<project>/quests/<slug>/QUEST.md`.
+- A default agent, chosen on this computer with `omarchy default agent`.
+- Where the projects live: Herdr and the default agent on a login shell's
+  `PATH`, and projects laid out as `<path>/<project>/quests/<slug>/QUEST.md`.
 - For each other host, `ssh <host>` without a prompt. SSH keeps host keys
   under the name you connect with, so accept the key once for each name you
   use in `places`, even for a host you already reach through an alias.
@@ -100,11 +101,18 @@ in the quest directory, or in the project root. A session that `herdr
 --remote` created itself would open in the home directory. An existing
 session, running or stopped, is attached as it is.
 
-In a new session, `herdr agent start` starts Claude Code once the shell has
-drawn its prompt, that is once the pane stops changing. Herdr types the
-command whenever the shell is running, and a shell still starting can drop
-it, so a start that times out is tried again. Herdr refuses a pane that is
-already running something, so a retry never types into Claude.
+In a new session, `herdr agent start` starts the default agent on this
+computer (`omarchy default agent`) once the shell has drawn its prompt, that
+is once the pane stops changing. It runs the agent's own command where the
+project lives, such as `codex`, with no options; Omarchy's launcher is not
+used there. Herdr types the command whenever the shell is running, and a
+shell still starting can drop it, so a start that times out is tried again.
+Herdr refuses a pane that is already running something, so a retry never
+types into the agent.
+
+The session opens without an agent, with a notification saying why, when no
+default agent is chosen, when it is not installed where the project lives, or
+when Herdr cannot start it (Ori, OpenClaw, and Crush).
 
 ## quest-window
 

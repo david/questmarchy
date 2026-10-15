@@ -33,10 +33,14 @@ computer when there is no host or <host> is this computer's name. A relative
 EOF
 }
 
-fail() {
+notice() {
   echo "quest-window: $*" >&2
   # Run from a key binding there is no terminal to print to.
   [[ -t 2 ]] || notify-send "quest-window" "$*" 2>/dev/null || true
+}
+
+fail() {
+  notice "$@"
   exit 1
 }
 
@@ -146,25 +150,40 @@ names_jq='
 '
 
 # Create the Herdr session on the host with its workspace in the given
-# directory, and start Claude Code there, unless the session already exists. A
-# session that herdr --remote creates opens in the home directory instead. The
-# shell is a login shell, whose profile puts Herdr on PATH wherever it is
-# installed.
+# directory, and start the agent there, unless the session already exists. The
+# agent is its command and Herdr's kind for it, or empty when there is no
+# default. A session that herdr --remote creates opens in the home directory
+# instead. The shell is a login shell, whose profile puts Herdr and the agent
+# on PATH wherever they are installed. Prints "notice: <text>" when the session
+# opens without an agent.
 create_session() {
-  on_host "$1" -l -s -- "$2" "$3" <<'EOF'
+  on_host "$1" -l -s -- "$2" "$3" "$4" "$5" <<'EOF'
 set -eu
-session=$1 dir=$2
+session=$1 dir=$2 agent=$3 kind=$4
 case $dir in "~/"*) dir=$HOME/${dir#"~/"} ;; esac
 command -v herdr >/dev/null || { echo "herdr is not on PATH on $(uname -n)" >&2; exit 1; }
 # An existing session, running or stopped, keeps its own workspaces.
 herdr session list | awk -v s="$session" 'NR > 1 && $1 == s { found = 1 } END { exit !found }' && exit 0
 [ -d "$dir" ] || { echo "no directory $dir" >&2; exit 1; }
+# Herdr lists the agent kinds it can start in its help. Should that list go
+# missing, the start is tried anyway.
+kinds=$(herdr agent start --help 2>/dev/null | sed -n 's/.*\[possible values: \(.*\)\]$/\1/p')
+if [ -z "$agent" ]; then
+  echo "notice: no default agent, so $session opens without one. Choose one with: omarchy default agent <name>"
+elif ! command -v "$agent" >/dev/null; then
+  echo "notice: $agent is not installed on $(uname -n), so $session opens without an agent"
+  agent=
+elif [ -n "$kinds" ] && ! printf '%s\n' "$kinds" | tr -d ' ' | tr , '\n' | grep -qx -- "$kind"; then
+  echo "notice: Herdr cannot start $agent, so $session opens without an agent"
+  agent=
+fi
 cd "$dir"
 dir=$PWD
 setsid -f herdr --session "$session" server >/dev/null 2>&1 </dev/null
 export HERDR_SESSION=$session
 for _ in $(seq 50); do
   if created=$(herdr workspace create --cwd "$dir" --focus 2>/dev/null); then
+    [ -n "$agent" ] || exit 0
     pane=$(jq -r .result.root_pane.pane_id <<<"$created")
     # Start the agent once the shell has drawn its prompt, that is once the
     # pane stops changing, without holding up the window. Herdr types the
@@ -181,10 +200,10 @@ for _ in $(seq 50); do
         last=$screen
       done
       for _ in 1 2 3; do
-        code=$(herdr agent start claude --kind claude --pane "$1" --timeout 8000 2>&1 | jq -r ".error.code // \"ok\"")
+        code=$(herdr agent start "$2" --kind "$2" --pane "$1" --timeout 8000 2>&1 | jq -r ".error.code // \"ok\"")
         [ "$code" = timeout ] || break
       done
-    ' _ "$pane" </dev/null >/dev/null 2>&1
+    ' _ "$pane" "$kind" </dev/null >/dev/null 2>&1
     exit 0
   fi
   sleep 0.1
@@ -256,6 +275,13 @@ session=$project${slug:+-$slug}
 # the tag it sends Ctrl+V, which Herdr takes as its image paste, dropping text.
 class=TUI.questmarchy.$machine.$project${slug:+.$slug}
 dir=${path%/}/$project${slug:+/quests/$slug}
+# A new session starts Omarchy's default agent on this computer, as its own
+# command wherever the project lives. Herdr's kind for an agent is its command,
+# except for Cursor's.
+agent=$(omarchy-default-agent 2>/dev/null || true)
+[[ $agent =~ ^[a-z][a-z0-9-]*$ ]] || agent=
+kind=$agent
+[[ $agent != cursor-agent ]] || kind=cursor
 
 address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class == $class) | .address' | head -n1)
 
@@ -267,13 +293,16 @@ else
 fi
 
 if [[ -n $dry_run ]]; then
-  [[ -n $address ]] || echo "would create the session $session in $dir on $machine, unless it exists"
+  [[ -n $address ]] || echo "would create the session $session in $dir on $machine with ${agent:-no agent}, unless it exists"
   echo "would run: ${command[*]}"
 elif [[ -n $address ]]; then
   "${command[@]}" >/dev/null
   record_opened || true
 else
-  error=$(create_session "$host" "$session" "$dir" 2>&1) || fail "could not create the session $session on $machine: $error"
+  output=$(create_session "$host" "$session" "$dir" "$agent" "$kind" 2>&1) ||
+    fail "could not create the session $session on $machine: $output"
+  notices=$(sed -n 's/^notice: //p' <<<"$output")
+  [[ -z $notices ]] || notice "$notices"
   record_opened || true
   exec "${command[@]}"
 fi
