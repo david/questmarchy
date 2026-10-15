@@ -4,14 +4,14 @@ An Omarchy shell plugin: a sword in the top bar that opens a searchable list
 of your projects or quests, those whose windows you opened most recently
 first. The projects are those with a `quests` directory in the places you
 list, on this computer or on other hosts. Choosing a project opens the agent in the project root, and
-choosing a quest opens the quest's agent, each in its own kitty window
+choosing a quest opens the quest's agent, each in its own terminal window
 attached to a Herdr session. If its window is already open, it is focused
 instead.
 
 ## Requirements
 
 - The Omarchy shell. Tested with Omarchy 4.0.0.alpha.
-- On this computer: kitty, [Herdr](https://herdr.dev), and `jq`.
+- On this computer: [Herdr](https://herdr.dev) and `jq`.
 - Where the projects live: Claude Code, Herdr on a login shell's `PATH`,
   and projects laid out as `<path>/<project>/quests/<slug>/QUEST.md`.
 - For each other host, `ssh <host>` without a prompt. SSH keeps host keys
@@ -86,8 +86,10 @@ quest session holds that quest's work; open more agents in Herdr tabs.
 | A project | `<project>` | `TUI.questmarchy.<host>.<project>` |
 | A quest | `<project>-<slug>` | `TUI.questmarchy.<host>.<project>.<slug>` |
 
-`<host>` is the place's host, or this computer's name. Omarchy tags `TUI.*`
-windows as terminals, so `Super+V` pastes in them.
+`<host>` is the place's host, or this computer's name. Windows open in
+Omarchy's default terminal (`omarchy default terminal`), through
+`omarchy-launch-tui`. Omarchy tags `TUI.*` windows as terminals, so `Super+V`
+pastes in them.
 
 A window on another host attaches with `herdr --remote <host> --session
 <session>`, and one on this computer with `herdr --session <session>`. The

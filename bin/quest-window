@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# quest-window: open the kitty window for a project, or for one of its quests,
+# quest-window: open the terminal window for a project, or for one of its quests,
 # or focus that window when it is already open. A project lives in a place: a
 # directory of projects on a host, or on this computer. Each window attaches to
 # its own Herdr session there. With -l, list the projects and quests in some
@@ -262,7 +262,8 @@ address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class =
 if [[ -n $address ]]; then
   command=(hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })")
 else
-  command=(setsid uwsm-app -- kitty --class "$class" herdr ${host:+--remote "$host"} --session "$session")
+  # Omarchy's default terminal, as Omarchy opens its own TUIs.
+  command=(omarchy-launch-tui --app-id="$class" herdr ${host:+--remote "$host"} --session "$session")
 fi
 
 if [[ -n $dry_run ]]; then
