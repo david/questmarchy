@@ -10,6 +10,10 @@ set -euo pipefail
 default_place='~/Projects'
 place=$default_place
 dry_run=
+# When each project's or quest's window was last opened or focused, as
+# [{place, project, slug, opened}], with no slug for a project. The bar widget
+# lists the most recently opened first.
+opened_file=${XDG_STATE_HOME:-$HOME/.local/state}/questmarchy/opened.json
 
 usage() {
   cat <<EOF
@@ -118,6 +122,21 @@ list_places() {
     fi
   done
   rm -rf "$listed"
+}
+
+# Record that the window for the project or quest was opened now, in place of
+# its last time. A missing or unreadable record starts over. The file is
+# replaced whole, so the widget never reads a partial one.
+record_opened() {
+  local dir=${opened_file%/*} tmp
+  mkdir -p "$dir" && tmp=$(mktemp "$dir/.opened.XXXXXX") || return
+  { cat "$opened_file" 2>/dev/null || true; } | jq -Rs \
+    --arg place "$place" --arg project "$project" --arg slug "$slug" --argjson now "$(date +%s)" '
+    (try fromjson catch null) as $record
+    | [($record | if type == "array" then .[] else empty end)
+        | select(.place != $place or .project != $project or (.slug // "") != $slug)]
+      + [{place: $place, project: $project} + (if $slug == "" then {} else {slug: $slug} end) + {opened: $now}]' \
+    >"$tmp" && mv -f "$tmp" "$opened_file" || { rm -f "$tmp"; return 1; }
 }
 
 # Names that could not be passed safely to the shell running an action.
@@ -251,7 +270,9 @@ if [[ -n $dry_run ]]; then
   echo "would run: ${command[*]}"
 elif [[ -n $address ]]; then
   "${command[@]}" >/dev/null
+  record_opened || true
 else
   error=$(create_session "$host" "$session" "$dir" 2>&1) || fail "could not create the session $session on $machine: $error"
+  record_opened || true
   exec "${command[@]}"
 fi

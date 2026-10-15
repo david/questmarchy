@@ -6,7 +6,8 @@ import qs.Commons as Commons
 import qs.Ui
 
 // A sword in the bar that opens a list of projects or quests, in two tabs,
-// most recently active first. Searching lists the matches from both. The
+// those whose windows were opened most recently first. Searching lists the
+// matches from both. The
 // projects are those with a quests directory in the places the settings list,
 // directories on a host or on this computer. The lists come from
 // `quest-window -l <place>...`, in this plugin's bin folder, through a cache
@@ -23,6 +24,8 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string cachePath:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/questmarchy/quests.json"
+  readonly property string openedPath:
+    (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/questmarchy/opened.json"
   readonly property string questWindow:
     decodeURIComponent(Qt.resolvedUrl("bin/quest-window").toString().replace(/^file:\/\//, ""))
   property string hostname: "localhost"
@@ -60,6 +63,11 @@ Panel {
   property var projects: []
   property var quests: []
   property var failedPlaces: []
+  // When the windows were last opened, from quest-window's record, in
+  // seconds since the epoch: each quest's by openedKey, and each project's,
+  // its own window or any of its quests', whichever is later, by
+  // openedKey(place, project).
+  property var windowTimes: ({ projects: {}, quests: {} })
   property bool refreshing: false
   property bool refreshFailed: false
   // "projects" or "quests". Kept between openings.
@@ -69,23 +77,26 @@ Panel {
   property int cursorIndex: 0
   readonly property bool searching: query.trim() !== ""
   // Each entry has a title, an optional second line, its group ("projects"
-  // or "quests"), and the quest-window arguments that open it.
-  readonly property var projectEntries: projects.filter(listed).map(function(project) {
+  // or "quests"), the quest-window arguments that open it, and when its
+  // window was last opened.
+  readonly property var projectEntries: byOpened(projects.filter(listed).map(function(project) {
     return {
       title: project.name,
       subtitle: showComputers ? placesByArg[project.place].label : "",
       group: "projects",
-      args: ["-p", project.place, project.name]
+      args: ["-p", project.place, project.name],
+      opened: windowTimes.projects[openedKey(project.place, project.name)] || 0
     }
-  })
-  readonly property var questEntries: quests.filter(listed).map(function(quest) {
+  }))
+  readonly property var questEntries: byOpened(quests.filter(listed).map(function(quest) {
     return {
       title: quest.slug,
       subtitle: quest.project + (showComputers ? " · " + placesByArg[quest.place].label : ""),
       group: "quests",
-      args: ["-p", quest.place, quest.project, quest.slug]
+      args: ["-p", quest.place, quest.project, quest.slug],
+      opened: windowTimes.quests[openedKey(quest.place, quest.project, quest.slug)] || 0
     }
-  })
+  }))
   // The active tab's entries or, while searching, the projects and then the
   // quests that match.
   readonly property var matches: searching
@@ -127,6 +138,7 @@ Panel {
   onOpenedChanged: if (opened) {
     if (panel.loadedContent) panel.loadedContent.search.clear()
     cursorIndex = 0
+    openedFile.reload()
     refresh()
     Qt.callLater(function() { if (panel.loadedContent) panel.loadedContent.forceActiveFocus() })
   }
@@ -166,6 +178,35 @@ Panel {
   // Whether a project or quest is in one of the settings' places.
   function listed(entry) {
     return placesByArg.hasOwnProperty(entry.place)
+  }
+
+  function openedKey(place, project, slug) {
+    return place + "\t" + project + "\t" + (slug || "")
+  }
+
+  // The entries whose windows were opened most recently first, then those
+  // never opened, each in the lists' order: most recently active first.
+  function byOpened(entries) {
+    return entries.map(function(entry, i) { return { entry: entry, i: i } })
+      .sort(function(a, b) { return b.entry.opened - a.entry.opened || a.i - b.i })
+      .map(function(item) { return item.entry })
+  }
+
+  // Reads quest-window's record of opened windows, [{place, project, slug,
+  // opened}] with no slug for a project.
+  function loadOpened(text) {
+    var times = { projects: {}, quests: {} }
+    var record = null
+    try { record = JSON.parse(text) } catch (e) {}
+    if (Array.isArray(record)) record.forEach(function(entry) {
+      if (!entry || typeof entry.place !== "string" || typeof entry.project !== "string"
+          || typeof entry.opened !== "number") return
+      var project = openedKey(entry.place, entry.project)
+      times.projects[project] = Math.max(times.projects[project] || 0, entry.opened)
+      if (typeof entry.slug === "string" && entry.slug !== "")
+        times.quests[openedKey(entry.place, entry.project, entry.slug)] = entry.opened
+    })
+    windowTimes = times
   }
 
   // Most recently active first, then by the given fields.
@@ -280,6 +321,17 @@ Panel {
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.load(text())
+  }
+
+  // Also reloaded each time the panel opens, in case the file appeared after
+  // the watch began.
+  FileView {
+    id: openedFile
+    path: root.openedPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.loadOpened(text())
   }
 
   FileView {

@@ -1,9 +1,9 @@
 # Questmarchy
 
 An Omarchy shell plugin: a sword in the top bar that opens a searchable list
-of your projects or quests, most recently active first. The projects are
-those with a `quests` directory in the places you list, on this computer or
-on other hosts. Choosing a project opens the agent in the project root, and
+of your projects or quests, those whose windows you opened most recently
+first. The projects are those with a `quests` directory in the places you
+list, on this computer or on other hosts. Choosing a project opens the agent in the project root, and
 choosing a quest opens the quest's agent, each in its own kitty window
 attached to a Herdr session. If its window is already open, it is focused
 instead.
@@ -60,6 +60,10 @@ example from a key binding.
 - Type to search both lists. While you search, the tabs give way to the
   matching realms, then the matching quests. Every word typed must appear
   in the name, and Tab does nothing.
+- Each list starts with what you opened most recently: a quest when its
+  window was last opened or focused, and a project when its own window or
+  one of its quests' was. Those never opened follow, most recently active
+  first, as `quest-window -l` lists them.
 - Up and Down, or Ctrl+N and Ctrl+P, move the highlight.
 - Enter or a click opens the highlighted project or quest.
 - Escape clears the search, then closes the panel.
@@ -113,6 +117,12 @@ A place is `[<host>:]<path>`, such as `devbox:/home/me/Projects`. A
 relative path starts at the home directory. The default place is
 `~/Projects` on this computer. `-n` prints what would happen without opening
 or focusing a window.
+
+Each time it opens or focuses a window, `quest-window` records the time in
+`~/.local/state/questmarchy/opened.json`, as `[{place, project, slug,
+opened}]`, one entry for each project or quest, with no `slug` for a
+project. `opened` is in seconds since the epoch. The place is recorded as
+given, so the widget matches only the places it passed.
 
 `-l` lists the places at once and prints, as JSON, `{projects: [{place, name,
 updated}], quests: [{place, project, slug, updated}], failed: [<place>]}`, the
