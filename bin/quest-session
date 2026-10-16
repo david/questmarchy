@@ -26,10 +26,12 @@ fi
 host=$1 session=$2 dir=$3 agent=${4:-}
 [[ $host != localhost ]] || host=
 
-# The agent runs from a login shell, whose profile puts it on PATH wherever it
-# is installed. quest-window passes only names that are safe here.
+# The agent runs from an interactive login shell, whose profile puts it on PATH
+# wherever it is installed, and whose rc sets up the environment a terminal
+# would have, such as mise's per-directory variables. quest-window passes only
+# names that are safe here.
 command=(shpool attach -d "$dir")
-[[ -z $agent ]] || command+=(-c "bash -lc 'exec $agent'")
+[[ -z $agent ]] || command+=(-c "bash -lic 'exec $agent'")
 
 # Wait for a key, so that the window stays open long enough to read why it is
 # about to close.

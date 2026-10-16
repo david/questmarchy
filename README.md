@@ -100,10 +100,10 @@ holds it, the window creates a session with the lowest free number `<n>`.
 
 A new session starts the default agent on this computer (`omarchy default
 agent`) as its own command where the project lives, such as `codex`, with no
-options, from a login shell; Omarchy's launcher is not used there. When no
-default agent is chosen, or it is not installed where the project lives, the
-session starts a shell instead, and a notification says why. When the agent
-exits, the session ends and the window closes.
+options, from an interactive login shell; Omarchy's launcher is not used there.
+When no default agent is chosen, or it is not installed where the project
+lives, the session starts a shell instead, and a notification says why. When
+the agent exits, the session ends and the window closes.
 
 The window runs `bin/quest-session`, which attaches with `shpool attach`, over
 `ssh -t <host>` for another host. When ssh loses the connection, the window
