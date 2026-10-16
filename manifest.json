@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "david.questmarchy",
   "name": "Questmarchy",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "author": "David Leal",
   "description": "Search your quests from the bar and open one",
   "kinds": ["bar-widget"],

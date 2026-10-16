@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# quest-session: attach this terminal to a shpool session, on a host or on
+# this computer, creating the session in a directory with an agent running
+# when it does not exist. quest-window runs it in each window it opens. When
+# the connection to the host is lost, it reconnects until the connection comes
+# back or a key is pressed. When the agent exits, so does the session, and the
+# window closes.
+set -uo pipefail
+
+usage() {
+  cat <<EOF
+Usage: quest-session <host> <session> <dir> [<agent>]
+
+Attach to the shpool session <session> on <host>, or on this computer when
+<host> is localhost, or create it in <dir> running <agent>, or the default
+shell without one.
+EOF
+}
+
+# No options: the terminal launcher, xdg-terminal-exec, reads options such as
+# -h even in the command it runs.
+if (( $# < 3 || $# > 4 )); then
+  usage >&2
+  exit 2
+fi
+host=$1 session=$2 dir=$3 agent=${4:-}
+[[ $host != localhost ]] || host=
+
+# The agent runs from a login shell, whose profile puts it on PATH wherever it
+# is installed. quest-window passes only names that are safe here.
+command=(shpool attach -d "$dir")
+[[ -z $agent ]] || command+=(-c "bash -lc 'exec $agent'")
+
+# Wait for a key, so that the window stays open long enough to read why it is
+# about to close.
+hold() {
+  printf '\n%s Press any key to close.\n' "$1"
+  read -rsn1
+}
+
+if [[ -z $host ]]; then
+  "${command[@]}" "$session"
+  status=$?
+  (( status == 0 )) || hold "The session ended with status $status."
+  exit "$status"
+fi
+
+# ssh exits with 255 when the connection fails or drops, and otherwise with the
+# session's status. A dropped connection can leave the old client attached, so
+# reconnecting forces it off. The window keeps a connection of its own, not one
+# shared through a ControlMaster, so that closing the window ends it and
+# detaches the session at once.
+force=()
+while :; do
+  ssh -t -o ControlPath=none -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+    -o ClearAllForwardings=yes "$host" "bash -lc $(printf '%q' "$(printf '%q ' "${command[@]}" "${force[@]}" "$session")")"
+  status=$?
+  if (( status != 255 )); then
+    (( status == 0 )) || hold "The session ended with status $status."
+    exit "$status"
+  fi
+  printf '\nLost the connection to %s. Reconnecting; press any key to close instead.\n' "$host"
+  read -rsn1 -t 5 && exit 0
+  force=(-f)
+done

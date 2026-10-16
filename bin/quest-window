@@ -2,8 +2,8 @@
 # quest-window: open the terminal window for a project, or for one of its quests,
 # or focus that window when it is already open. A project lives in a place: a
 # directory of projects on a host, or on this computer. Each window attaches to
-# its own Herdr session there. With -l, list the projects and quests in some
-# places. The Questmarchy bar widget runs it from the plugin folder; see
+# a shpool session there, through quest-session. With -l, list the projects and
+# quests in some places. The Questmarchy bar widget runs it from the plugin folder; see
 # README.md there.
 set -euo pipefail
 
@@ -149,69 +149,45 @@ names_jq='
   def slug: test("^[a-z0-9]+(-[a-z0-9]+)*$");
 '
 
-# Create the Herdr session on the host with its workspace in the given
-# directory, and start the agent there, unless the session already exists. The
-# agent is its command and Herdr's kind for it, or empty when there is no
-# default. A session that herdr --remote creates opens in the home directory
-# instead. The shell is a login shell, whose profile puts Herdr and the agent
-# on PATH wherever they are installed. Prints "notice: <text>" when the session
-# opens without an agent.
-create_session() {
-  on_host "$1" -l -s -- "$2" "$3" "$4" "$5" <<'EOF'
+# Get ready to open a session on the host in the given directory. Print "dir:
+# <dir>" with the directory's full path; "agent: <agent>" with the agent to
+# start, empty when it is not installed or there is no default, and then
+# "reason: <text>" saying why; and, after a line "sessions:", the host's
+# sessions as shpool list --json prints them. The shell is a login shell, whose
+# profile puts shpool and the agent on PATH wherever they are installed.
+prepare_session() {
+  on_host "$1" -l -s -- "$2" "$3" <<'EOF'
 set -eu
-session=$1 dir=$2 agent=$3 kind=$4
-case $dir in "~/"*) dir=$HOME/${dir#"~/"} ;; esac
-command -v herdr >/dev/null || { echo "herdr is not on PATH on $(uname -n)" >&2; exit 1; }
-# An existing session, running or stopped, keeps its own workspaces.
-herdr session list | awk -v s="$session" 'NR > 1 && $1 == s { found = 1 } END { exit !found }' && exit 0
+dir=$1 agent=$2
+case $dir in "~") dir=$HOME ;; "~/"*) dir=$HOME/${dir#"~/"} ;; esac
+command -v shpool >/dev/null || { echo "shpool is not on PATH on $(uname -n)" >&2; exit 1; }
 [ -d "$dir" ] || { echo "no directory $dir" >&2; exit 1; }
-# Herdr lists the agent kinds it can start in its help. Should that list go
-# missing, the start is tried anyway.
-kinds=$(herdr agent start --help 2>/dev/null | sed -n 's/.*\[possible values: \(.*\)\]$/\1/p')
+cd "$dir"
+echo "dir: $PWD"
 if [ -z "$agent" ]; then
-  echo "notice: no default agent, so $session opens without one. Choose one with: omarchy default agent <name>"
+  echo "reason: no default agent is chosen (omarchy default agent <name>)"
 elif ! command -v "$agent" >/dev/null; then
-  echo "notice: $agent is not installed on $(uname -n), so $session opens without an agent"
-  agent=
-elif [ -n "$kinds" ] && ! printf '%s\n' "$kinds" | tr -d ' ' | tr , '\n' | grep -qx -- "$kind"; then
-  echo "notice: Herdr cannot start $agent, so $session opens without an agent"
+  echo "reason: $agent is not installed on $(uname -n)"
   agent=
 fi
-cd "$dir"
-dir=$PWD
-setsid -f herdr --session "$session" server >/dev/null 2>&1 </dev/null
-export HERDR_SESSION=$session
-for _ in $(seq 50); do
-  if created=$(herdr workspace create --cwd "$dir" --focus 2>/dev/null); then
-    [ -n "$agent" ] || exit 0
-    pane=$(jq -r .result.root_pane.pane_id <<<"$created")
-    # Start the agent once the shell has drawn its prompt, that is once the
-    # pane stops changing, without holding up the window. Herdr types the
-    # agent's command whenever the shell is running, and a shell still
-    # starting can drop it, so a start that times out is tried again. Herdr
-    # refuses a pane whose shell has started something, so a retry never
-    # types into the agent.
-    setsid -f bash -c '
-      last=
-      for _ in $(seq 50); do
-        sleep 0.2
-        screen=$(herdr pane read "$1" 2>/dev/null) || continue
-        [ -n "${screen//[[:space:]]/}" ] && [ "$screen" = "$last" ] && break
-        last=$screen
-      done
-      for _ in 1 2 3; do
-        code=$(herdr agent start "$2" --kind "$2" --pane "$1" --timeout 8000 2>&1 | jq -r ".error.code // \"ok\"")
-        [ "$code" = timeout ] || break
-      done
-    ' _ "$pane" "$kind" </dev/null >/dev/null 2>&1
-    exit 0
-  fi
-  sleep 0.1
-done
-echo "could not start the session" >&2
-exit 1
+echo "agent: $agent"
+echo "sessions:"
+shpool list --json
 EOF
 }
+
+# From shpool list --json, choose the session named <prefix>:<number> for a
+# window: the disconnected one with the lowest number, so a closed window's
+# agent is picked up again, or else a new one with the lowest free number.
+# Print "<number> existing" or "<number> new".
+choose_session_jq='
+  [.sessions[] | select(.name | startswith($prefix))
+    | {number: (.name | ltrimstr($prefix)), status: (.status | ascii_downcase)}
+    | select(.number | test("^[1-9][0-9]*$")) | .number |= tonumber]
+  | (map(select(.status == "disconnected")) | min_by(.number) | .number) as $detached
+  | if $detached then "\($detached) existing"
+    else "\([range(1; length + 2)] - map(.number) | min) new" end
+'
 
 # Turn the list into {projects: [{place, name, updated}], quests: [{place,
 # project, slug, updated}], failed: [place]}, the first two most recently
@@ -270,39 +246,50 @@ parse_place "$place" || fail "not a place: $place"
 [[ -z $slug || $slug =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "not a quest slug: $slug"
 
 machine=${host:-$(uname -n)}
-session=$project${slug:+-$slug}
+prefix=questmarchy:$project${slug:+:$slug}
 # Omarchy tags TUI.* windows as terminals, so Super+V pastes in them. Without
-# the tag it sends Ctrl+V, which Herdr takes as its image paste, dropping text.
+# the tag it sends Ctrl+V, which an agent such as Claude Code takes as an image
+# paste, dropping text.
 class=TUI.questmarchy.$machine.$project${slug:+.$slug}
 dir=${path%/}/$project${slug:+/quests/$slug}
 # A new session starts Omarchy's default agent on this computer, as its own
-# command wherever the project lives. Herdr's kind for an agent is its command,
-# except for Cursor's.
+# command wherever the project lives.
 agent=$(omarchy-default-agent 2>/dev/null || true)
 [[ $agent =~ ^[a-z][a-z0-9-]*$ ]] || agent=
-kind=$agent
-[[ $agent != cursor-agent ]] || kind=cursor
+here=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 
 address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class == $class) | .address' | head -n1)
 
+# Run in the window: attach to the session that prepare_session chose. The
+# launcher runs it with xdg-terminal-exec -e, which still reads options such as
+# -h in the command, so quest-session takes none.
+window_command() {
+  command=(omarchy-launch-tui --app-id="$class" bash "$here/quest-session" "${host:-localhost}" "$1" "$2" ${3:+"$3"})
+}
+
 if [[ -n $address ]]; then
   command=(hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })")
-else
-  # Omarchy's default terminal, as Omarchy opens its own TUIs.
-  command=(omarchy-launch-tui --app-id="$class" herdr ${host:+--remote "$host"} --session "$session")
-fi
-
-if [[ -n $dry_run ]]; then
-  [[ -n $address ]] || echo "would create the session $session in $dir on $machine with ${agent:-no agent}, unless it exists"
+  if [[ -n $dry_run ]]; then
+    echo "would run: ${command[*]}"
+  else
+    "${command[@]}" >/dev/null
+    record_opened || true
+  fi
+elif [[ -n $dry_run ]]; then
+  echo "would attach the first disconnected $prefix:<number> on $machine, or create one in $dir with ${agent:-no agent}"
+  window_command "$prefix:<number>" "$dir" "$agent"
   echo "would run: ${command[*]}"
-elif [[ -n $address ]]; then
-  "${command[@]}" >/dev/null
-  record_opened || true
 else
-  output=$(create_session "$host" "$session" "$dir" "$agent" "$kind" 2>&1) ||
-    fail "could not create the session $session on $machine: $output"
-  notices=$(sed -n 's/^notice: //p' <<<"$output")
-  [[ -z $notices ]] || notice "$notices"
+  output=$(prepare_session "$host" "$dir" "$agent" 2>&1) ||
+    fail "could not open a session for $prefix on $machine: $output"
+  field() { sed -n "s/^$1: //p" <<<"$output"; }
+  chosen=$(sed '1,/^sessions:$/d' <<<"$output" | jq -r --arg prefix "$prefix:" "$choose_session_jq" 2>/dev/null) ||
+    fail "could not read the sessions on $machine: $output"
+  # A running session ignores the agent and keeps its own. A session whose agent
+  # exited while no window was attached is still listed, and starts it again.
+  reason=$(field reason)
+  [[ $chosen != *new || -z $reason ]] || notice "the session starts a shell, because $reason"
+  window_command "$prefix:${chosen% *}" "$(field dir)" "$(field agent)"
   record_opened || true
   exec "${command[@]}"
 fi

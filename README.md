@@ -5,22 +5,23 @@ of your projects or quests, those whose windows you opened most recently
 first. The projects are those with a `quests` directory in the places you
 list, on this computer or on other hosts. Choosing a project opens the agent in the project root, and
 choosing a quest opens the quest's agent, each in its own terminal window
-attached to a Herdr session. If its window is already open, it is focused
-instead.
+attached to a [shpool](https://github.com/shell-pool/shpool) session, which
+keeps the agent running when the window closes or the connection drops. If
+its window is already open, it is focused instead.
 
 ## Requirements
 
 - The Omarchy shell. Tested with Omarchy 4.0.0.alpha.
-- On this computer: [Herdr](https://herdr.dev) and `jq`.
+- On this computer: `jq`.
 - A default agent, chosen on this computer with `omarchy default agent`.
-- Where the projects live: Herdr and the default agent on a login shell's
-  `PATH`, and projects laid out as `<path>/<project>/quests/<slug>/QUEST.md`.
+- Where the projects live, this computer included when a place is here:
+  shpool and the default agent on a login shell's `PATH`, and projects laid
+  out as `<path>/<project>/quests/<slug>/QUEST.md`. shpool is in the AUR
+  (`yay -S shpool`) and in Homebrew (`brew install shpool`), and starts its
+  daemon itself.
 - For each other host, `ssh <host>` without a prompt. SSH keeps host keys
   under the name you connect with, so accept the key once for each name you
   use in `places`, even for a host you already reach through an alias.
-- No saved Herdr machines on this computer (`herdr machine list`). A local
-  Herdr window also connects to every saved machine and shows the selected
-  one, so a project on this computer would open another machine's session.
 
 ## Install
 
@@ -77,42 +78,44 @@ its last lists, and the panel says it could not reach it.
 
 ## Windows and sessions
 
-Each window attaches to its own Herdr session where the project lives, so
-windows never share a focused workspace and there is no session picker to go
-through. The project session is where quests are created and archived. A
-quest session holds that quest's work; open more agents in Herdr tabs.
+Each window attaches to a shpool session where the project lives, running
+the agent in the project root or the quest directory. The project session is
+where quests are created and archived. A quest session holds that quest's
+work.
 
-| Opens | Herdr session | Window class |
+| Opens | shpool session | Window class |
 | --- | --- | --- |
-| A project | `<project>` | `TUI.questmarchy.<host>.<project>` |
-| A quest | `<project>-<slug>` | `TUI.questmarchy.<host>.<project>.<slug>` |
+| A project | `questmarchy:<project>:<n>` | `TUI.questmarchy.<host>.<project>` |
+| A quest | `questmarchy:<project>:<slug>:<n>` | `TUI.questmarchy.<host>.<project>.<slug>` |
 
 `<host>` is the place's host, or this computer's name. Windows open in
 Omarchy's default terminal (`omarchy default terminal`), through
 `omarchy-launch-tui`. Omarchy tags `TUI.*` windows as terminals, so `Super+V`
 pastes in them.
 
-A window on another host attaches with `herdr --remote <host> --session
-<session>`, and one on this computer with `herdr --session <session>`. The
-Herdr client runs here, so its notifications appear on this computer.
+A window attaches to the first session for its project or quest that no
+terminal is attached to, so closing a window and opening it again picks up
+the same agent. When every one is attached, as when a terminal elsewhere
+holds it, the window creates a session with the lowest free number `<n>`.
 
-When the session does not exist yet, it is first started with one workspace
-in the quest directory, or in the project root. A session that `herdr
---remote` created itself would open in the home directory. An existing
-session, running or stopped, is attached as it is.
+A new session starts the default agent on this computer (`omarchy default
+agent`) as its own command where the project lives, such as `codex`, with no
+options, from a login shell; Omarchy's launcher is not used there. When no
+default agent is chosen, or it is not installed where the project lives, the
+session starts a shell instead, and a notification says why. When the agent
+exits, the session ends and the window closes.
 
-In a new session, `herdr agent start` starts the default agent on this
-computer (`omarchy default agent`) once the shell has drawn its prompt, that
-is once the pane stops changing. It runs the agent's own command where the
-project lives, such as `codex`, with no options; Omarchy's launcher is not
-used there. Herdr types the command whenever the shell is running, and a
-shell still starting can drop it, so a start that times out is tried again.
-Herdr refuses a pane that is already running something, so a retry never
-types into the agent.
+The window runs `bin/quest-session`, which attaches with `shpool attach`, over
+`ssh -t <host>` for another host. When ssh loses the connection, the window
+says so and reconnects every few seconds, forcing off the old client that the
+host may still count as attached, until it gets through or a key is pressed.
+Each window has an SSH connection of its own, not one shared through a
+`ControlMaster`, so closing the window detaches its session at once. When the
+session ends with an error, the window stays open until a key is pressed, so
+the error can be read.
 
-The session opens without an agent, with a notification saying why, when no
-default agent is chosen, when it is not installed where the project lives, or
-when Herdr cannot start it (Ori, OpenClaw, and Crush).
+An agent that exits while no window is attached leaves its session listed as
+detached. Attaching to it starts the agent again.
 
 ## quest-window
 
