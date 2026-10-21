@@ -7,14 +7,13 @@ import qs.Ui
 
 // A sword in the bar that opens a list of projects or quests, in two tabs,
 // those whose windows were opened most recently first. Searching lists the
-// matches from both. The
-// projects are those with a quests directory in the places the settings list,
-// directories on a host or on this computer. The lists come from
-// `quest-window -l <place>...`, in this plugin's bin folder, through a cache
-// file that the instance on every monitor watches. Choosing a project runs
-// `quest-window -p <place> <project>`, which opens the agent in the project
-// root, and choosing a quest runs `quest-window -p <place> <project> <slug>`;
-// either focuses the window if it is open.
+// matches from both. The projects are the quest command's realms, in the
+// worlds it is configured with: directories on a host or on this computer.
+// The lists come from `quest-window -l`, in this plugin's bin folder, through
+// a cache file that the instance on every monitor watches. Choosing a project
+// runs `quest-window -w <world> <project>`, which opens the agent in the
+// project root, and choosing a quest runs `quest-window -w <world> <project>
+// <slug>`; either focuses the window if it is open.
 Panel {
   id: root
   manageIpc: false
@@ -30,43 +29,33 @@ Panel {
     decodeURIComponent(Qt.resolvedUrl("bin/quest-window").toString().replace(/^file:\/\//, ""))
   property string hostname: "localhost"
 
-  // The settings' places, [{host, path}] with no host for this computer, as
-  // {arg, label, failedLabel}: the place as quest-window takes it,
-  // [<host>:]<path>, the name of its computer, and how a failure to list it is
-  // reported. Places that could not be passed to quest-window are left out.
-  readonly property var places: {
-    var list = setting("places", null)
-    if (!Array.isArray(list)) list = [{ path: "~/Projects" }]
-    var places = []
-    list.forEach(function(place) {
-      if (!place || typeof place.path !== "string" || !/^[^\t\n]+$/.test(place.path)) return
-      var host = typeof place.host === "string" ? place.host : ""
-      if (!/^[A-Za-z0-9._-]*$/.test(host)) return
-      var arg = (host ? host + ":" : "") + place.path
-      if (places.some(function(known) { return known.arg === arg })) return
-      places.push({ arg: arg, label: host || hostname, failedLabel: host || place.path })
+  // The quest command's worlds, [{world, host, path}] with a null host for
+  // this computer, as the last lists gave them.
+  property var worlds: []
+  // Each world by name, as {label, failedLabel}: the name of its computer, and
+  // how a failure to list it is reported.
+  readonly property var worldsByName: {
+    var byName = {}
+    worlds.forEach(function(world) {
+      byName[world.world] = { label: world.host || hostname, failedLabel: world.host || world.path }
     })
-    return places
+    return byName
   }
-  readonly property var placesByArg: {
-    var byArg = {}
-    places.forEach(function(place) { byArg[place.arg] = place })
-    return byArg
-  }
-  // Whether the places are on more than one computer, so that entries name
+  // Whether the worlds are on more than one computer, so that entries name
   // theirs.
-  readonly property bool showComputers: places.some(function(place) { return place.label !== places[0].label })
+  readonly property bool showComputers: worlds.some(function(world) {
+    return (world.host || hostname) !== (worlds[0].host || hostname)
+  })
 
-  // [{place, name, updated}] and [{place, project, slug, updated}], most
-  // recently active first, and the places the last refresh could not list.
-  // They can hold places that the settings no longer list.
+  // [{world, name}] and [{world, project, slug}], by name, and the worlds the
+  // last refresh could not list.
   property var projects: []
   property var quests: []
-  property var failedPlaces: []
+  property var failedWorlds: []
   // When the windows were last opened, from quest-window's record, in
   // seconds since the epoch: each quest's by openedKey, and each project's,
   // its own window or any of its quests', whichever is later, by
-  // openedKey(place, project).
+  // openedKey(world, project).
   property var windowTimes: ({ projects: {}, quests: {} })
   property bool refreshing: false
   property bool refreshFailed: false
@@ -82,19 +71,19 @@ Panel {
   readonly property var projectEntries: byOpened(projects.filter(listed).map(function(project) {
     return {
       title: project.name,
-      subtitle: showComputers ? placesByArg[project.place].label : "",
+      subtitle: showComputers ? worldsByName[project.world].label : "",
       group: "projects",
-      args: ["-p", project.place, project.name],
-      opened: windowTimes.projects[openedKey(project.place, project.name)] || 0
+      args: ["-w", project.world, project.name],
+      opened: windowTimes.projects[openedKey(project.world, project.name)] || 0
     }
   }))
   readonly property var questEntries: byOpened(quests.filter(listed).map(function(quest) {
     return {
       title: quest.slug,
-      subtitle: quest.project + (showComputers ? " · " + placesByArg[quest.place].label : ""),
+      subtitle: quest.project + (showComputers ? " · " + worldsByName[quest.world].label : ""),
       group: "quests",
-      args: ["-p", quest.place, quest.project, quest.slug],
-      opened: windowTimes.quests[openedKey(quest.place, quest.project, quest.slug)] || 0
+      args: ["-w", quest.world, quest.project, quest.slug],
+      opened: windowTimes.quests[openedKey(quest.world, quest.project, quest.slug)] || 0
     }
   }))
   // The active tab's entries or, while searching, the projects and then the
@@ -119,11 +108,11 @@ Panel {
   readonly property string status: {
     if (refreshFailed) return strings.t("refreshFailed")
     var failed = []
-    failedPlaces.forEach(function(arg) {
-      var place = placesByArg[arg]
-      if (place && failed.indexOf(place.failedLabel) === -1) failed.push(place.failedLabel)
+    failedWorlds.forEach(function(name) {
+      var world = worldsByName[name]
+      if (world && failed.indexOf(world.failedLabel) === -1) failed.push(world.failedLabel)
     })
-    if (failed.length > 0) return strings.t("placesFailed").replace("{places}", failed.join(", "))
+    if (failed.length > 0) return strings.t("worldsFailed").replace("{worlds}", failed.join(", "))
     if (searching) return matches.length === 0 ? strings.t("noMatches") : ""
     if (matches.length === 0) {
       if (refreshing) return strings.t("loading")
@@ -142,7 +131,6 @@ Panel {
     refresh()
     Qt.callLater(function() { if (panel.loadedContent) panel.loadedContent.forceActiveFocus() })
   }
-  onPlacesChanged: if (opened) refresh()
   onQueryChanged: cursorIndex = 0
   onTabChanged: cursorIndex = 0
   onMatchesChanged: cursorIndex = Math.max(0, Math.min(cursorIndex, matches.length - 1))
@@ -175,17 +163,17 @@ Panel {
     })
   }
 
-  // Whether a project or quest is in one of the settings' places.
+  // Whether a project or quest is in one of the worlds.
   function listed(entry) {
-    return placesByArg.hasOwnProperty(entry.place)
+    return worldsByName.hasOwnProperty(entry.world)
   }
 
-  function openedKey(place, project, slug) {
-    return place + "\t" + project + "\t" + (slug || "")
+  function openedKey(world, project, slug) {
+    return world + "\t" + project + "\t" + (slug || "")
   }
 
   // The entries whose windows were opened most recently first, then those
-  // never opened, each in the lists' order: most recently active first.
+  // never opened, each in the lists' order: by name.
   function byOpened(entries) {
     return entries.map(function(entry, i) { return { entry: entry, i: i } })
       .sort(function(a, b) { return b.entry.opened - a.entry.opened || a.i - b.i })
@@ -193,7 +181,7 @@ Panel {
   }
 
   // Reads quest-window's record of opened windows, [{place, project, slug,
-  // opened}] with no slug for a project.
+  // opened}] with no slug for a project, where place is the world.
   function loadOpened(text) {
     var times = { projects: {}, quests: {} }
     var record = null
@@ -209,10 +197,9 @@ Panel {
     windowTimes = times
   }
 
-  // Most recently active first, then by the given fields.
-  function newestFirst(fields) {
+  // By the given fields, in order.
+  function byFields(fields) {
     return function(a, b) {
-      if (a.updated !== b.updated) return (b.updated || 0) - (a.updated || 0)
       for (var i = 0; i < fields.length; i++) {
         if (a[fields[i]] !== b[fields[i]]) return a[fields[i]] < b[fields[i]] ? -1 : 1
       }
@@ -220,49 +207,56 @@ Panel {
     }
   }
 
-  // The lists in quest-window's JSON or the cache's, as {projects, quests,
-  // failed}, without malformed entries; null when the text holds no lists.
+  // The lists in quest-window's JSON or the cache's, as {worlds, projects,
+  // quests, failed}, without malformed entries; null when the text holds no
+  // lists, as in a cache from before the quest command.
   function parseLists(text) {
     var data = null
     try { data = JSON.parse(text) } catch (e) {}
-    if (!data || !Array.isArray(data.projects) || !Array.isArray(data.quests)) return null
+    if (!data || !Array.isArray(data.worlds) || !Array.isArray(data.projects)
+        || !Array.isArray(data.quests)) return null
     var named = function(value) { return typeof value === "string" && value !== "" }
     return {
+      worlds: data.worlds.filter(function(world) {
+        return world && named(world.world) && named(world.path) && (world.host === null || named(world.host))
+      }),
       projects: data.projects.filter(function(project) {
-        return project && named(project.place) && named(project.name)
+        return project && named(project.world) && named(project.name)
       }),
       quests: data.quests.filter(function(quest) {
-        return quest && named(quest.place) && named(quest.project) && named(quest.slug)
+        return quest && named(quest.world) && named(quest.project) && named(quest.slug)
       }),
       failed: Array.isArray(data.failed) ? data.failed.filter(named) : []
     }
   }
 
   function load(text) {
-    var lists = parseLists(text) || { projects: [], quests: [], failed: [] }
+    var lists = parseLists(text) || { worlds: [], projects: [], quests: [], failed: [] }
+    worlds = lists.worlds
     projects = lists.projects
     quests = lists.quests
-    failedPlaces = lists.failed
+    failedWorlds = lists.failed
   }
 
-  // Takes the lists from a refresh, with the last lists of the places it
+  // Takes the lists from a refresh, with the last lists of the worlds it
   // could not list, and writes them to the cache for the instances on the
   // other monitors.
   function finishRefresh(text) {
     var lists = parseLists(text)
     refreshFailed = !lists
     if (!lists) return
-    var failed = function(entry) { return lists.failed.indexOf(entry.place) !== -1 }
-    lists.projects = lists.projects.concat(projects.filter(failed)).sort(newestFirst(["name", "place"]))
-    lists.quests = lists.quests.concat(quests.filter(failed)).sort(newestFirst(["project", "slug", "place"]))
+    var failed = function(entry) { return lists.failed.indexOf(entry.world) !== -1 }
+    lists.projects = lists.projects.concat(projects.filter(failed)).sort(byFields(["name", "world"]))
+    lists.quests = lists.quests.concat(quests.filter(failed)).sort(byFields(["project", "slug", "world"]))
+    worlds = lists.worlds
     projects = lists.projects
     quests = lists.quests
-    failedPlaces = lists.failed
+    failedWorlds = lists.failed
     cache.setText(JSON.stringify(lists) + "\n")
   }
 
   function refresh() {
-    if (refresher.running || places.length === 0) return
+    if (refresher.running) return
     refreshing = true
     refresher.running = true
     watchdog.restart()
@@ -343,8 +337,7 @@ Panel {
   // Makes the cache's directory for finishRefresh to write in.
   Process {
     id: refresher
-    command: ["bash", "-lc", 'mkdir -p "${1%/*}" && script=$2 && shift 2 && exec bash "$script" -l "$@"',
-      "bash", root.cachePath, root.questWindow].concat(root.places.map(function(place) { return place.arg }))
+    command: ["bash", "-lc", 'mkdir -p "${1%/*}" && exec bash "$2" -l', "bash", root.cachePath, root.questWindow]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.finishRefresh(text)
@@ -356,8 +349,8 @@ Panel {
     }
   }
 
-  // quest-window gives up on connecting after 10 seconds; this stops a
-  // refresh that hangs after connecting.
+  // The quest command gives up on connecting to a host after 10 seconds; this
+  // stops a refresh that hangs after connecting.
   Timer {
     id: watchdog
     interval: 30000

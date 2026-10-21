@@ -2,8 +2,9 @@
 
 An Omarchy shell plugin: a sword in the top bar that opens a searchable list
 of your projects or quests, those whose windows you opened most recently
-first. The projects are those with a `quests` directory in the places you
-list, on this computer or on other hosts. Choosing a project opens the agent in the project root, and
+first. The projects are the realms that the
+[`quest` command](https://github.com/david/quest) finds in your worlds, on
+this computer or on other hosts. Choosing a project opens the agent in the project root, and
 choosing a quest opens the quest's agent, each in its own terminal window
 attached to a [shpool](https://github.com/shell-pool/shpool) session, which
 keeps the agent running when the window closes or the connection drops. If
@@ -12,16 +13,18 @@ its window is already open, it is focused instead.
 ## Requirements
 
 - The Omarchy shell. Tested with Omarchy 4.0.0.alpha.
-- On this computer: `jq`.
+- On this computer: `jq`, and the `quest` command from the
+  [quest skill](https://github.com/david/quest): on `PATH`, or with the skill
+  installed in `~/.claude/skills/quest` or `~/.agents/skills/quest`.
 - A default agent, chosen on this computer with `omarchy default agent`.
-- Where the projects live, this computer included when a place is here:
-  shpool and the default agent on a login shell's `PATH`, and projects laid
-  out as `<path>/<project>/quests/<slug>/QUEST.md`. shpool is in the AUR
+- Where the projects live, this computer included when a world is here:
+  shpool and the default agent on a login shell's `PATH`, and `python3`,
+  which runs `quest` there to list them. shpool is in the AUR
   (`yay -S shpool`) and in Homebrew (`brew install shpool`), and starts its
   daemon itself.
 - For each other host, `ssh <host>` without a prompt. SSH keeps host keys
   under the name you connect with, so accept the key once for each name you
-  use in `places`, even for a host you already reach through an alias.
+  use in your worlds, even for a host you already reach through an alias.
 
 ## Install
 
@@ -35,22 +38,20 @@ omarchy plugin enable david.questmarchy --section left --after omarchy.menu
 
 ## Configure
 
-List the places to look for projects in the widget's entry in
-`~/.config/omarchy/shell.json`. Each place is a directory of projects, with
-the host it is on. Leave out the host, or give this computer's name, for a
-place on this computer. Without `places`, the widget lists `~/Projects` here.
+The widget lists the worlds that the `quest` command is configured with, in
+`~/.config/quest/worlds.json`. Each world is a directory of realms, with the
+host it is on. Leave out the host, or give this computer's name, for a world
+on this computer. Without the file, `quest` lists `~/Projects` here.
 
 ```json
-{
-  "id": "david.questmarchy",
-  "places": [
-    { "host": "devbox", "path": "/home/me/Projects" },
-    { "path": "~/Projects" }
-  ]
-}
+[
+  { "host": "devbox", "path": "/home/me/Projects" },
+  { "path": "~/Projects" }
+]
 ```
 
-When the places are on more than one computer, each entry names its computer.
+When the worlds are on more than one computer, each entry names its computer.
+`quest world list` prints the worlds as `quest` reads them.
 
 ## Use
 
@@ -65,15 +66,14 @@ example from a key binding.
   in the name, and Tab does nothing.
 - Each list starts with what you opened most recently: a quest when its
   window was last opened or focused, and a project when its own window or
-  one of its quests' was. Those never opened follow, most recently active
-  first, as `quest-window -l` lists them.
+  one of its quests' was. Those never opened follow by name.
 - Up and Down, or Ctrl+N and Ctrl+P, move the highlight.
 - Enter or a click opens the highlighted project or quest.
 - Escape clears the search, then closes the panel.
 
 The lists refresh each time the panel opens. They are cached in
 `~/.cache/questmarchy/quests.json`, so the last lists show while the new ones
-load. A place that cannot be listed, such as one on a host that is off, keeps
+load. A world that cannot be listed, such as one on a host that is off, keeps
 its last lists, and the panel says it could not reach it.
 
 ## Windows and sessions
@@ -88,7 +88,7 @@ work.
 | A project | `questmarchy:<project>:<n>` | `TUI.questmarchy.<host>.<project>` |
 | A quest | `questmarchy:<project>:<slug>:<n>` | `TUI.questmarchy.<host>.<project>.<slug>` |
 
-`<host>` is the place's host, or this computer's name. Windows open in
+`<host>` is the world's host, or this computer's name. Windows open in
 Omarchy's default terminal (`omarchy default terminal`), through
 `omarchy-launch-tui`. Omarchy tags `TUI.*` windows as terminals, so `Super+V`
 pastes in them.
@@ -123,36 +123,30 @@ The widget does its work through `bin/quest-window`, which can also be run by
 hand:
 
 ```sh
-bin/quest-window [-n] [-p <place>] <project> [<slug>]
-bin/quest-window -l [<place>...]
+bin/quest-window [-n] [-w <world>] <project> [<slug>]
+bin/quest-window -l
 ```
 
-A place is `[<host>:]<path>`, such as `devbox:/home/me/Projects`. A
-relative path starts at the home directory. The default place is
-`~/Projects` on this computer. `-n` prints what would happen without opening
-or focusing a window.
+A world is `[<host>:]<path>`, as `quest world list` prints it, such as
+`devbox:/home/me/Projects`. Without `-w`, the project is looked for in every
+world, and `quest-window` stops when more than one has it. `-n` prints what
+would happen without opening or focusing a window. To open a new session,
+`quest-window` asks `quest show`, or `quest realm show` for a project, for its
+directory.
 
 Each time it opens or focuses a window, `quest-window` records the time in
 `~/.local/state/questmarchy/opened.json`, as `[{place, project, slug,
 opened}]`, one entry for each project or quest, with no `slug` for a
-project. `opened` is in seconds since the epoch. The place is recorded as
-given, so the widget matches only the places it passed.
+project. `place` is the world, under the name worlds had before the `quest`
+command, so that earlier records still count. `opened` is in seconds since the
+epoch.
 
-`-l` lists the places at once and prints, as JSON, `{projects: [{place, name,
-updated}], quests: [{place, project, slug, updated}], failed: [<place>]}`, the
-first two most recently active first. Archived quests are left out. `failed`
-holds the places that could not be listed. `updated` is in seconds since the
-epoch:
-
-- For a quest, the newest change to its records (outside `.git`, `worktrees`,
-  and `local-data`) or to a Claude Code transcript started in its directory.
-- For a project, the newest change to a transcript started in its root, or
-  the latest of its quests, whichever is later.
-
-`QUEST.md` times and quest snapshot times alone were tried and rejected: bulk
-edits and the first snapshot gave most quests the same time. Claude Code files
-transcripts under a directory's physical path, so the listing resolves
-symlinks such as `/home` to `/var/home`.
+`-l` runs `quest world list`, `quest realm list`, and `quest list` at once and
+prints, as JSON, `{worlds: [{world, host, path}], projects: [{world, name}],
+quests: [{world, project, slug}], failed: [<world>]}`. Archived quests are
+left out. `failed` holds the worlds that could not be listed. A realm whose
+quests could not be listed, as when its quest root declaration is wrong, shows
+none; `quest list` says why.
 
 ## Development
 
@@ -169,8 +163,7 @@ did not open, the keys go to whichever window has focus.
 Omarchy plugin details that are easy to miss:
 
 - The manifest's `barWidget.defaults` are not passed to the widget, which
-  gets only its entry in `shell.json`, so the code repeats its defaults.
-- The settings form has no list type, so `places` is edited by hand.
+  gets only its entry in `shell.json`, so code must repeat any default.
 - `omarchy plugin validate` rejects any symlink in the folder, including a
   linked plugin folder itself, so validate the clone, not the link.
 

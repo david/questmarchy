@@ -1,35 +1,36 @@
 #!/usr/bin/env bash
 # quest-window: open the terminal window for a project, or for one of its quests,
-# or focus that window when it is already open. A project lives in a place: a
-# directory of projects on a host, or on this computer. Each window attaches to
-# a shpool session there, through quest-session. With -l, list the projects and
-# quests in some places. The Questmarchy bar widget runs it from the plugin folder; see
+# or focus that window when it is already open. A project is a realm of the
+# quest command, which finds it in a world: a directory of realms on a host, or
+# on this computer. Each window attaches to a shpool session there, through
+# quest-session. With -l, list the worlds, projects, and quests, as the quest
+# command does. The Questmarchy bar widget runs it from the plugin folder; see
 # README.md there.
 set -euo pipefail
 
-default_place='~/Projects'
-place=$default_place
+world=
 dry_run=
 # When each project's or quest's window was last opened or focused, as
-# [{place, project, slug, opened}], with no slug for a project. The bar widget
-# lists the most recently opened first.
+# [{place, project, slug, opened}], with no slug for a project. place is the
+# world, under the name it had before the quest command. The bar widget lists
+# the most recently opened first.
 opened_file=${XDG_STATE_HOME:-$HOME/.local/state}/questmarchy/opened.json
 
 usage() {
   cat <<EOF
-Usage: quest-window [-n] [-p <place>] <project> [<slug>]
-       quest-window -l [<place>...]
+Usage: quest-window [-n] [-w <world>] <project> [<slug>]
+       quest-window -l
 
 Open the window for a project's root, or for its quest <slug>.
 
-A place is [<host>:]<path>, a directory of projects on <host>, or on this
-computer when there is no host or <host> is this computer's name. A relative
-<path> starts at the home directory. The default is $default_place.
+A world is [<host>:]<path>, a directory of projects on <host>, or on this
+computer when there is no host or <host> is this computer's name;
+\`quest world list\` prints yours. Without -w, the project is looked for in
+all of them.
 
-  -p  the place of the project
+  -w  the world of the project
   -n  print what would be done instead of doing it
-  -l  print the projects and quests in the places as JSON, most recently
-      active first
+  -l  print the worlds, projects, and quests as JSON
 EOF
 }
 
@@ -44,9 +45,9 @@ fail() {
   exit 1
 }
 
-# Set host and path from a place, leaving host empty for this computer. Fails
-# for a place that could not be passed safely to the shell running an action.
-parse_place() {
+# Set host and path from a world, leaving host empty for this computer. Fails
+# for a world that could not be passed safely to the shell running an action.
+parse_world() {
   if [[ $1 =~ ^([^:/]+):(.*)$ ]]; then
     host=${BASH_REMATCH[1]} path=${BASH_REMATCH[2]}
   else
@@ -70,62 +71,47 @@ on_host() {
   fi
 }
 
-# Print "<project><TAB><TAB><time>" for each project in the place with a
-# quests directory, followed by "<project><TAB><slug><TAB><time>" for each of
-# its active quests. <time> is when the project root or the quest was last
-# active, in seconds since the epoch: the newest change to a Claude Code
-# transcript started there or, for a quest, to its records.
-list_place() {
-  on_host "$1" -s -- "$2" <<'EOF'
-shopt -s nullglob
-path=$1
-case $path in "~") path=$HOME ;; "~/"*) path=$HOME/${path#"~/"} ;; esac
-cd -- "$path" || exit
-# Claude Code keeps the transcripts of a directory under its physical path,
-# with every character other than a letter or digit replaced by a hyphen.
-root=$(pwd -P)
-transcript_times() {
-  local dir=$root/$1
-  find "$HOME/.claude/projects/${dir//[^A-Za-z0-9]/-}" -maxdepth 1 -name '*.jsonl' -printf '%T@\n'
-}
-newest() { sort -rn | head -n1 | cut -d. -f1; }
-for quests in */quests/; do
-  project=${quests%%/*}
-  time=$(transcript_times "$project" 2>/dev/null | newest)
-  printf '%s\t\t%s\n' "$project" "$time"
-  for record in "$quests"*/QUEST.md; do
-    quest=${record%/QUEST.md}
-    time=$({
-      find "$quest" -mindepth 1 \( -name .git -o -name worktrees -o -name local-data \) -prune \
-        -o -type f -printf '%T@\n'
-      transcript_times "$quest"
-    } 2>/dev/null | newest)
-    printf '%s\t%s\t%s\n' "$project" "${quest##*/}" "$time"
-  done
-done
-EOF
-}
-
-# List all the places at once. Print each line that list_place prints for a
-# place after "<place><TAB>", and the place alone when it could not be listed.
-list_places() {
-  local listed i line
-  local -a pids=()
-  listed=$(mktemp -d)
-  for i in "${!places[@]}"; do
-    { parse_place "${places[i]}" && list_place "$host" "$path"; } >"$listed/$i" 2>/dev/null &
-    pids+=("$!")
-  done
-  for i in "${!places[@]}"; do
-    if wait "${pids[i]}"; then
-      while IFS= read -r line; do
-        printf '%s\t%s\n' "${places[i]}" "$line"
-      done <"$listed/$i"
-    else
-      printf '%s\n' "${places[i]}"
+# The quest command: on PATH, or where the quest skill installs it.
+find_quest() {
+  local skill
+  if command -v quest >/dev/null; then
+    quest=(quest)
+    return
+  fi
+  for skill in "$HOME/.claude/skills/quest" "$HOME/.agents/skills/quest"; do
+    if [[ -f $skill/bin/quest ]]; then
+      quest=(python3 "$skill/bin/quest")
+      return
     fi
   done
+  fail "the quest command is not installed: neither on PATH nor in the quest skill"
+}
+
+# Print {worlds: [{world, host, path}], projects: [{world, name}], quests:
+# [{world, project, slug}], failed: [<world>]}, from the quest command's
+# lists, leaving out unsafe names. failed holds the worlds that could not be
+# listed; a realm that could not be listed is left out.
+list_all() {
+  local listed status=0 pid
+  local -a pids=()
+  listed=$(mktemp -d)
+  "${quest[@]}" world list >"$listed/worlds" & pids+=("$!")
+  "${quest[@]}" realm list >"$listed/realms" & pids+=("$!")
+  "${quest[@]}" list >"$listed/quests" & pids+=("$!")
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+  (( status == 0 )) && jq -n "$names_jq"'
+    input as $worlds | input as $realms | input as $quests
+    | {
+        worlds: [$worlds[] | {world, host, path}],
+        projects: [$realms.realms[] | select(.realm | project) | {world, name: .realm}],
+        quests: [$quests.quests[] | select((.realm | project) and (.slug | slug))
+          | {world, project: .realm, slug}],
+        failed: [$realms.failed[], $quests.failed[] | select(has("realm") | not) | .world] | unique
+      }' "$listed/worlds" "$listed/realms" "$listed/quests" || status=1
   rm -rf "$listed"
+  return "$status"
 }
 
 # Record that the window for the project or quest was opened now, in place of
@@ -135,7 +121,7 @@ record_opened() {
   local dir=${opened_file%/*} tmp
   mkdir -p "$dir" && tmp=$(mktemp "$dir/.opened.XXXXXX") || return
   { cat "$opened_file" 2>/dev/null || true; } | jq -Rs \
-    --arg place "$place" --arg project "$project" --arg slug "$slug" --argjson now "$(date +%s)" '
+    --arg place "$world" --arg project "$project" --arg slug "$slug" --argjson now "$(date +%s)" '
     (try fromjson catch null) as $record
     | [($record | if type == "array" then .[] else empty end)
         | select(.place != $place or .project != $project or (.slug // "") != $slug)]
@@ -189,47 +175,25 @@ choose_session_jq='
     else "\([range(1; length + 2)] - map(.number) | min) new" end
 '
 
-# Turn the list into {projects: [{place, name, updated}], quests: [{place,
-# project, slug, updated}], failed: [place]}, the first two most recently
-# active first, leaving out unsafe names. A project was last active when its
-# root or any of its quests was. failed holds the places that could not be
-# listed.
-list_json() {
-  jq -R -s "$names_jq"'
-    [split("\n")[] | select(. != "") | split("\t")]
-    | [.[] | select(length == 1) | .[0]] as $failed
-    | [.[] | select(length > 1)
-        | {place: .[0], project: .[1], slug: (.[2] // ""), updated: ((.[3] // "") | tonumber? // 0)}
-        | select((.project | project) and (.slug == "" or (.slug | slug)))]
-    | map(select(.slug != "")) as $quests
-    | {
-        projects: [.[] | select(.slug == "") | . as $root
-          | {place, name: .project,
-             updated: ([.updated, ($quests[] | select(.place == $root.place and .project == $root.project) | .updated)] | max)}]
-          | sort_by(-.updated, .name, .place),
-        quests: $quests | sort_by(-.updated, .project, .slug, .place),
-        failed: $failed
-      }'
-}
-
 list=
-while getopts nlp:h opt; do
+while getopts nlw:h opt; do
   case $opt in
     n) dry_run=1 ;;
     l) list=1 ;;
-    p) place=$OPTARG ;;
+    w) world=$OPTARG ;;
     h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
 
+find_quest
+
 if [[ -n $list ]]; then
-  places=("$@")
-  (( ${#places[@]} > 0 )) || places=("$default_place")
-  # The caller reports the places that failed: the bar widget shows them in
+  (( $# == 0 )) || { usage >&2; exit 2; }
+  # The caller reports the worlds that failed: the bar widget shows them in
   # its panel.
-  list_places | list_json
+  list_all
   exit
 fi
 
@@ -241,9 +205,31 @@ fi
 project=$1
 slug=${2:-}
 
-parse_place "$place" || fail "not a place: $place"
 [[ $project =~ ^[A-Za-z0-9._-]+$ ]] || fail "not a project name: $project"
 [[ -z $slug || $slug =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "not a quest slug: $slug"
+
+# Print the project or quest as quest realm show or quest show does. With no
+# world, it is looked for in every world.
+find_entry() {
+  local errors output status=0
+  errors=$(mktemp)
+  if [[ -n $slug ]]; then
+    output=$("${quest[@]}" show ${world:+--world="$world"} -- "$project" "$slug" 2>"$errors") || status=$?
+  else
+    output=$("${quest[@]}" realm show ${world:+--world="$world"} -- "$project" 2>"$errors") || status=$?
+  fi
+  local message=$(<"$errors")
+  rm -f "$errors"
+  (( status == 0 )) || fail "${message:-quest exited with status $status}"
+  printf '%s\n' "$output"
+}
+
+entry=
+if [[ -z $world ]]; then
+  entry=$(find_entry)
+  world=$(jq -r .world <<<"$entry")
+fi
+parse_world "$world" || fail "not a world: $world"
 
 machine=${host:-$(uname -n)}
 prefix=questmarchy:$project${slug:+:$slug}
@@ -251,7 +237,6 @@ prefix=questmarchy:$project${slug:+:$slug}
 # the tag it sends Ctrl+V, which an agent such as Claude Code takes as an image
 # paste, dropping text.
 class=TUI.questmarchy.$machine.$project${slug:+.$slug}
-dir=${path%/}/$project${slug:+/quests/$slug}
 # A new session starts Omarchy's default agent on this computer, as its own
 # command wherever the project lives.
 agent=$(omarchy-default-agent 2>/dev/null || true)
@@ -275,7 +260,15 @@ if [[ -n $address ]]; then
     "${command[@]}" >/dev/null
     record_opened || true
   fi
-elif [[ -n $dry_run ]]; then
+  exit
+fi
+
+# Only a new session needs the directory, which the quest command finds from
+# the realm's declared quest root.
+[[ -n $entry ]] || entry=$(find_entry)
+dir=$(jq -r .dir <<<"$entry")
+
+if [[ -n $dry_run ]]; then
   echo "would attach the first disconnected $prefix:<number> on $machine, or create one in $dir with ${agent:-no agent}"
   window_command "$prefix:<number>" "$dir" "$agent"
   echo "would run: ${command[*]}"

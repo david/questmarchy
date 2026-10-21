@@ -8,5 +8,5 @@
   "noQuests": "No quests found",
   "noMatches": "No matching realms or quests",
   "refreshFailed": "Couldn't refresh the lists",
-  "placesFailed": "Couldn't reach {places}"
+  "worldsFailed": "Couldn't reach {worlds}"
 }

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "david.questmarchy",
   "name": "Questmarchy",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "author": "David Leal",
   "description": "Search your quests from the bar and open one",
   "kinds": ["bar-widget"],
@@ -15,8 +15,6 @@
     "category": "Productivity",
     "allowMultiple": false,
     "defaultSection": "left",
-    "defaults": {
-      "places": [{ "path": "~/Projects" }]
-    }
+    "defaults": {}
   }
 }
