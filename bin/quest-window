@@ -263,8 +263,8 @@ if [[ -n $address ]]; then
   exit
 fi
 
-# Only a new session needs the directory, which the quest command finds from
-# the realm's declared quest root.
+# Only a new session needs the directory, which the quest command finds in
+# the realm's quests directory.
 [[ -n $entry ]] || entry=$(find_entry)
 dir=$(jq -r .dir <<<"$entry")
 

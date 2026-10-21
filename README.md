@@ -145,8 +145,8 @@ epoch.
 prints, as JSON, `{worlds: [{world, host, path}], projects: [{world, name}],
 quests: [{world, project, slug}], failed: [<world>]}`. Archived quests are
 left out. `failed` holds the worlds that could not be listed. A realm whose
-quests could not be listed, as when its quest root declaration is wrong, shows
-none; `quest list` says why.
+quests could not be listed, as when its `quests` directory cannot be read,
+shows none; `quest list` says why.
 
 ## Development
 
