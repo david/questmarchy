@@ -25,14 +25,12 @@ link=$dir/${session#*/}.json
 case ${1:-} in
   save)
     # The link holds the hook's input as the agent gave it, with the agent's
-    # name. It is replaced whole, so a reader never sees a partial one.
-    mkdir -p "$dir" && tmp=$(mktemp "$dir/.link.XXXXXX") || exit 1
-    if { printf '{"agentSessionType": "%s", "hookInput": ' "${2:?}"; cat; printf '}\n'; } >"$tmp"; then
-      mv -f "$tmp" "$link"
-    else
-      rm -f "$tmp"
-      exit 1
-    fi
+    # name. It is written in place: sessionctl reads it only to recreate a
+    # session that shpool lost, when nothing is writing it, and a running
+    # session ignores the command made from it. A link cut short, as by a
+    # crash, names no conversation, and the session starts the agent instead.
+    mkdir -p "$dir" &&
+      { printf '{"agentSessionType": "%s", "hookInput": ' "${2:?}"; cat; printf '}\n'; } >"$link"
     ;;
   drop)
     rm -f "$link"
