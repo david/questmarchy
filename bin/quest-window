@@ -3,9 +3,9 @@
 # or focus that window when it is already open. A project is a realm of the
 # quest command, which finds it in a world: a directory of realms on a host, or
 # on this computer. Each window attaches to a shpool session there, through
-# quest-session. With -l, list the worlds, projects, and quests, as the quest
-# command does. The Questmarchy bar widget runs it from the plugin folder; see
-# README.md there.
+# quest-session; sessionctl, run there too, chooses the sessions. With -l, list
+# the worlds, projects, and quests, as the quest command does. The Questmarchy
+# bar widget runs it from the plugin folder; see README.md there.
 set -euo pipefail
 
 world=
@@ -57,19 +57,44 @@ parse_world() {
   [[ -z $host || $host =~ ^[A-Za-z0-9._-]+$ ]] && [[ -n $path && $path != *[$'\t\n']* ]]
 }
 
-# Run bash in the home directory on the host, or here when it is empty, with
-# the script on standard input. The remaining arguments go to bash: its
-# options, then -s -- and the script's arguments. Forwardings are cleared so
-# the host's configured tunnels are not opened.
-on_host() {
+# Run sessionctl with the remaining arguments in the home directory on the
+# host, or here when it is empty, from a login shell, whose profile puts
+# python3, shpool, and the agent on PATH wherever they are installed. Here it is
+# the plugin's own. On a host it is the copy that quest-session runs there too,
+# and the plugin's goes along on standard input, in the same ssh call, to
+# replace it first when it is missing or differs. Forwardings are cleared so the
+# host's configured tunnels are not opened.
+run_sessionctl() {
   local host=$1
   shift
   if [[ -z $host ]]; then
-    (cd && bash "$@")
+    (cd && bash -lc 'exec "$0" "$@"' "$here/sessionctl" "$@")
   else
-    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes "$host" bash "${@@Q}"
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes "$host" \
+      bash -lc "'$install_sessionctl'" sessionctl "${@@Q}" <"$here/sessionctl"
   fi
 }
+
+# Put sessionctl from standard input in ~/.local/share/questmarchy/bin, unless
+# the same is there, then run it with the arguments. It is replaced whole, so
+# that a window attaching meanwhile never runs part of it. Without cmp, it is
+# replaced every time. The script holds no single quote, so that in single
+# quotes it reaches the host's shell as it is, where ${...@Q} would put its
+# newlines in $'...', which not every shell reads.
+install_sessionctl='
+set -e
+bin=$HOME/.local/share/questmarchy/bin
+mkdir -p "$bin"
+tmp=$(mktemp "$bin/.sessionctl.XXXXXX")
+cat >"$tmp"
+if cmp -s "$tmp" "$bin/sessionctl"; then
+  rm -f "$tmp"
+else
+  chmod +x "$tmp"
+  mv -f "$tmp" "$bin/sessionctl"
+fi
+exec "$bin/sessionctl" "$@"
+'
 
 # The quest command: on PATH, or where the quest skill installs it.
 find_quest() {
@@ -133,64 +158,6 @@ record_opened() {
 names_jq='
   def project: test("^[A-Za-z0-9._-]+$");
   def slug: test("^[a-z0-9]+(-[a-z0-9]+)*$");
-'
-
-# Get ready to open the sessions named <prefix><number> on the host, in the
-# given directory. Print "dir: <dir>" with the directory's full path; "agent:
-# <agent>" with the agent to start, empty when it is not installed or there is
-# no default, and then "reason: <text>" saying why; "unlinked: <text>" when the
-# agent is Claude and Questmarchy's plugin for it, whose hooks link sessions to
-# conversations, is not installed; "link: <session>" for each session that is
-# linked to a conversation, from the files those hooks keep; and, after a line
-# "sessions:", the host's sessions as shpool list --json prints them. The shell
-# is a login shell, whose profile puts shpool and the agent on PATH wherever
-# they are installed.
-prepare_session() {
-  on_host "$1" -l -s -- "$2" "$3" "$4" <<'EOF'
-set -eu
-dir=$1 agent=$2 prefix=$3
-case $dir in "~") dir=$HOME ;; "~/"*) dir=$HOME/${dir#"~/"} ;; esac
-command -v shpool >/dev/null || { echo "shpool is not on PATH on $(uname -n)" >&2; exit 1; }
-[ -d "$dir" ] || { echo "no directory $dir" >&2; exit 1; }
-cd "$dir"
-echo "dir: $PWD"
-if [ -z "$agent" ]; then
-  echo "reason: no default agent is chosen (omarchy default agent <name>)"
-elif ! command -v "$agent" >/dev/null; then
-  echo "reason: $agent is not installed on $(uname -n)"
-  agent=
-fi
-echo "agent: $agent"
-if [ "$agent" = claude ] &&
-  ! grep -qs '"questmarchy@questmarchy"' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"; then
-  echo "unlinked: Questmarchy's plugin for Claude Code is not installed on $(uname -n)"
-fi
-for link in "$HOME/.local/state/questmarchy/sessions/shpool/$prefix"*.json; do
-  [ -f "$link" ] || continue
-  link=${link##*/}
-  echo "link: ${link%.json}"
-done
-echo "sessions:"
-shpool list --json
-EOF
-}
-
-# From shpool list --json and the linked sessions, as positional arguments,
-# choose the sessions named <prefix><number> to open a window for: each
-# disconnected one, so that a closed window's agent is picked up again, and
-# each linked one that shpool lost, so that its conversation is resumed; or,
-# when there is neither, a new one with the lowest number free of both. Print
-# "<number> existing", "<number> lost", or "<number> new" for each.
-choose_sessions_jq='
-  def number: ltrimstr($prefix) | select(test("^[1-9][0-9]*$")) | tonumber;
-  [.sessions[] | select(.name | startswith($prefix))
-    | {number: (.name | number), status: (.status | ascii_downcase)}] as $listed
-  | [$ARGS.positional[] | select(startswith($prefix)) | number] as $linked
-  | ($listed | map(.number)) as $numbers
-  | [($listed[] | select(.status == "disconnected") | "\(.number) existing"),
-     (($linked - $numbers | unique)[] | "\(.) lost")]
-  | if length > 0 then .[]
-    else "\([range(1; ($numbers + $linked | unique | length) + 2)] - $numbers - $linked | min) new" end
 '
 
 list=
@@ -263,7 +230,7 @@ here=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 
 address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class == $class) | .address' | head -n1)
 
-# Run in a window: attach to a session that choose_sessions_jq chose. The
+# Run in a window: attach to a session that sessionctl chose. The
 # launcher runs it with xdg-terminal-exec -e, which still reads options such as
 # -h in the command, so quest-session takes none.
 window_command() {
@@ -291,25 +258,21 @@ if [[ -n $dry_run ]]; then
   window_command "$prefix:<number>" "$dir" "$agent"
   echo "would run for each: ${command[*]}"
 else
-  output=$(prepare_session "$host" "$dir" "$agent" "$prefix:" 2>&1) ||
+  output=$(run_sessionctl "$host" prepare "$prefix:" "$dir" "$agent" 2>&1) ||
     fail "could not open a session for $prefix on $machine: $output"
-  field() { sed -n "s/^$1: //p" <<<"$output"; }
-  mapfile -t links < <(field link)
-  chosen=$(sed '1,/^sessions:$/d' <<<"$output" |
-    jq -r --arg prefix "$prefix:" "$choose_sessions_jq" --args "${links[@]}" 2>/dev/null) ||
-    fail "could not read the sessions on $machine: $output"
-  # A running session ignores the agent and keeps its own. A session whose agent
-  # exited while no window was attached is still listed, and starts it again. A
-  # lost session is recreated with the agent its link names.
-  if [[ $chosen == *new ]]; then
-    reason=$(field reason) unlinked=$(field unlinked)
-    [[ -z $reason ]] || notice "the session starts a shell, because $reason"
-    [[ -z $unlinked ]] || notice "the session's conversation will not come back if shpool loses the session, because $unlinked"
-  fi
+  # sessionctl answers on the last line, after anything the login shell's
+  # profile printed.
+  answer() { jq -r "$1" <<<"${output##*$'\n'}"; }
+  mapfile -t sessions < <(answer '.sessions[]' 2>/dev/null)
+  (( ${#sessions[@]} > 0 )) || fail "could not read the sessions on $machine: $output"
+  mapfile -t notices < <(answer '.notices[]')
+  for message in "${notices[@]}"; do
+    notice "$message"
+  done
   record_opened || true
-  mapfile -t chosen <<<"$chosen"
-  for choice in "${chosen[@]}"; do
-    window_command "$prefix:${choice% *}" "$(field dir)" "$(field agent)"
-    "${command[@]}" || notice "could not open a window for $prefix:${choice% *}"
+  dir=$(answer .dir) agent=$(answer .agent)
+  for session in "${sessions[@]}"; do
+    window_command "$session" "$dir" "$agent"
+    "${command[@]}" || notice "could not open a window for $session"
   done
 fi

@@ -19,7 +19,8 @@ its window is already open, it is focused instead.
 - A default agent, chosen on this computer with `omarchy default agent`.
 - Where the projects live, this computer included when a world is here:
   shpool and the default agent on a login shell's `PATH`, and `python3`,
-  which runs `quest` there to list them. shpool is in the AUR
+  which runs `quest` there to list them, and Questmarchy's
+  [`sessionctl`](#sessionctl). shpool is in the AUR
   (`yay -S shpool`) and in Homebrew (`brew install shpool`), and starts its
   daemon itself.
 - For each other host, `ssh <host>` without a prompt. SSH keeps host keys
@@ -112,7 +113,8 @@ When no default agent is chosen, or it is not installed where the project
 lives, the session starts a shell instead, and a notification says why. When
 the agent exits, the session ends and the window closes.
 
-The window runs `bin/quest-session`, which attaches with `shpool attach`, over
+The window runs `bin/quest-session`, which attaches with `shpool attach`
+through [`sessionctl`](#sessionctl) where the project lives, over
 `ssh -t <host>` for another host. When ssh loses the connection, the window
 says so and reconnects every few seconds, forcing off the old client that the
 host may still count as attached, until it gets through or a key is pressed.
@@ -150,11 +152,11 @@ environment, and the hooks need it. A Claude started inside the session, as
 by the agent itself, inherits it and replaces the link with its own
 conversation.
 
-`quest-session` reads the link before it attaches, again on each reconnection,
-since the host may have lost the session meanwhile. When it creates a linked
-session, it starts `claude --resume` with the linked conversation, whatever
-the default agent. A conversation with nothing in it has no transcript to
-resume, so Claude starts fresh instead.
+`sessionctl attach` reads the link each time `quest-session` attaches, again
+on each reconnection, since the host may have lost the session meanwhile. When
+it creates a linked session, it starts `claude --resume` with the linked
+conversation, whatever the default agent. A conversation with nothing in it
+has no transcript to resume, so Claude starts fresh instead.
 
 ## quest-window
 
@@ -171,7 +173,8 @@ A world is `[<host>:]<path>`, as `quest world list` prints it, such as
 world, and `quest-window` stops when more than one has it. `-n` prints what
 would happen without opening or focusing a window. To open a new session,
 `quest-window` asks `quest show`, or `quest realm show` for a project, for its
-directory.
+directory. It chooses the sessions to open with
+[`sessionctl prepare`](#sessionctl) where the project lives.
 
 Each time it opens or focuses a window, `quest-window` records the time in
 `~/.local/state/questmarchy/opened.json`, as `[{place, project, slug,
@@ -186,6 +189,40 @@ quests: [{world, project, slug}], failed: [<world>]}`. Archived quests are
 left out. `failed` holds the worlds that could not be listed. A realm whose
 quests could not be listed, as when its `quests` directory cannot be read,
 shows none; `quest list` says why.
+
+## sessionctl
+
+`bin/sessionctl` does the part of opening a window that runs where the
+project lives, so that `quest-window` and each window's `quest-session` reach
+a host with one ssh call each. It is written in Python, since a host has
+`python3` for `quest` but need not have `jq`.
+
+```sh
+bin/sessionctl prepare <prefix> <dir> [<agent>]
+bin/sessionctl attach [-f] <session> <dir> [<agent>]
+```
+
+`prepare` checks the directory, shpool, the agent, and Questmarchy's plugin
+for Claude Code, reads the links, lists shpool's sessions, and chooses the
+sessions named `<prefix><number>` to open windows for, as
+[Windows and sessions](#windows-and-sessions) describes. It prints `{dir,
+agent, sessions, notices}` as JSON: the directory's full path, the agent to
+start, empty when there is none, the sessions' names, and the notifications
+to show. It changes nothing, so it can be run by hand to see what opening a
+project or quest would do.
+
+`attach` attaches to the session, with `-f` forcing off the terminal attached
+to it, or creates it in `<dir>`, resuming its linked conversation or running
+`<agent>`. It becomes `shpool attach`, so that the window gets the session's
+status.
+
+On this computer, both run the plugin's own `sessionctl`. On another host,
+they run the copy in `~/.local/share/questmarchy/bin/sessionctl`: each time
+`quest-window` opens sessions there, it sends the plugin's copy along in the
+same ssh call, and the host replaces its own when it is missing or differs. A
+plugin update thus reaches a host the next time one of its projects or quests
+opens. Removing Questmarchy leaves the copy behind; delete
+`~/.local/share/questmarchy` on each host to remove it too.
 
 ## Development
 

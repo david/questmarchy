@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+# sessionctl: the part of opening a Questmarchy window that runs where the
+# project lives, on a host or on this computer. quest-window runs `sessionctl
+# prepare` to choose the shpool sessions to open windows for, and quest-session
+# runs `sessionctl attach` in each window, to attach to its session or create
+# it, resuming the conversation linked to it. On a host, both run the copy in
+# ~/.local/share/questmarchy/bin, which quest-window keeps the same as the
+# plugin's, from a login shell, whose profile puts python3, shpool, and the
+# agent on PATH wherever they are installed. On this computer they run the
+# plugin's own. It is Python because a host has python3 for the quest command,
+# but need not have jq.
+
+# Annotations stay unevaluated, so Python 3.9, as on macOS, accepts X | None.
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from typing import NoReturn
+
+
+# The links between sessions and conversations, which the hooks of
+# Questmarchy's plugin for Claude Code keep; see claude-plugin/hooks/link-session.
+LINKS = Path.home() / ".local/state/questmarchy/sessions/shpool"
+
+
+def fail(message: str) -> NoReturn:
+    # sys.exit with a message exits with 1, never with the 255 that quest-session
+    # takes from ssh as a lost connection.
+    sys.exit(message)
+
+
+def numbers(names: list[str], prefix: str) -> list[int]:
+    """The number of each name that is <prefix><number>, in order."""
+    return [int(name[len(prefix):]) for name in names
+            if name.startswith(prefix) and re.fullmatch(r"[1-9][0-9]*", name[len(prefix):])]
+
+
+def prepare(args: argparse.Namespace) -> int:
+    """Print {dir, agent, sessions, notices} as JSON: the directory's full path,
+    the agent to start, empty when there is none, the names of the sessions to
+    open windows for, and what the user should be told about them."""
+    machine = os.uname().nodename
+    if not shutil.which("shpool"):
+        fail(f"shpool is not on PATH on {machine}")
+    directory = os.path.abspath(os.path.expanduser(args.dir))
+    if not os.path.isdir(directory):
+        fail(f"no directory {directory}")
+    agent, reason = args.agent, ""
+    if not agent:
+        reason = "no default agent is chosen (omarchy default agent <name>)"
+    elif not shutil.which(agent):
+        agent, reason = "", f"{agent} is not installed on {machine}"
+
+    # shpool says why it failed on standard error, which the caller shows.
+    listing = subprocess.run(["shpool", "list", "--json"], stdout=subprocess.PIPE, text=True)
+    if listing.returncode:
+        fail(f"shpool list failed on {machine}")
+    try:
+        sessions = json.loads(listing.stdout)["sessions"]
+        names = [session["name"] for session in sessions]
+        disconnected = [session["name"] for session in sessions
+                        if session["status"].lower() == "disconnected"]
+    except (ValueError, LookupError, TypeError, AttributeError):
+        fail(f"could not read the sessions shpool listed on {machine}")
+    try:
+        links = [name[:-len(".json")] for name in os.listdir(LINKS) if name.endswith(".json")]
+    except OSError:
+        links = []
+
+    # Each disconnected session, so that a closed window's agent is picked up
+    # again, and each linked one that shpool lost, so that its conversation is
+    # resumed; or, when there is neither, a new one with the lowest number free
+    # of both.
+    listed, linked = set(numbers(names, args.prefix)), set(numbers(links, args.prefix))
+    chosen = numbers(disconnected, args.prefix) + sorted(linked - listed)
+    notices = []
+    if not chosen:
+        new = 1
+        while new in listed or new in linked:
+            new += 1
+        chosen = [new]
+        # Only a new session starts the agent. A running session keeps its own,
+        # a session whose agent exited while no window was attached is still
+        # listed and starts it again, and a lost session is recreated with the
+        # agent its link names.
+        if reason:
+            notices.append(f"the session starts a shell, because {reason}")
+        # Without the plugin, whose hooks link sessions to conversations, there
+        # is no link to resume from.
+        config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+        try:
+            plugins = (config / "plugins/installed_plugins.json").read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            plugins = ""
+        if agent == "claude" and '"questmarchy@questmarchy"' not in plugins:
+            notices.append("the session's conversation will not come back if shpool loses the"
+                           " session, because Questmarchy's plugin for Claude Code is not"
+                           f" installed on {machine}")
+    print(json.dumps({"dir": directory, "agent": agent,
+                      "sessions": [f"{args.prefix}{number}" for number in chosen],
+                      "notices": notices}))
+    return 0
+
+
+def linked_conversation(session: str) -> tuple[str, str] | None:
+    """The ID and transcript path of the Claude conversation linked to the
+    session, or None when it has no link, or one that names no conversation."""
+    # Only an ID and an absolute path of the characters Claude uses count, so
+    # that a damaged link starts the agent instead of failing to resume.
+    try:
+        link = json.loads((LINKS / f"{session}.json").read_text(encoding="utf-8"))
+        if link["agentSessionType"] == "claude":
+            hook = link["hookInput"]
+            if (re.fullmatch(r"[A-Za-z0-9-]+", hook["session_id"])
+                    and re.fullmatch(r"/[A-Za-z0-9/._-]+", hook["transcript_path"])):
+                return hook["session_id"], hook["transcript_path"]
+    except (OSError, ValueError, LookupError, TypeError):
+        pass
+    return None
+
+
+def attach(args: argparse.Namespace) -> int:
+    """Attach to the session, or create it in the directory, resuming the
+    conversation linked to it, or else running the agent, or the default shell
+    without one."""
+    # The agent runs from an interactive login shell, whose profile puts it on
+    # PATH wherever it is installed, and whose rc sets up the environment a
+    # terminal would have, such as mise's per-directory variables. Claude runs
+    # with QUESTMARCHY_SESSION, so that its hooks keep the session's link. A
+    # linked conversation is resumed with the agent that had it, while its
+    # transcript is there: Claude writes none for a conversation with nothing in
+    # it, and cannot resume one without. A running session ignores all of this.
+    conversation = linked_conversation(args.session)
+    start = "claude" if conversation else args.agent
+    run = ""
+    if start == "claude":
+        run = f"export QUESTMARCHY_SESSION={shlex.quote(f'shpool/{args.session}')}; "
+        if conversation:
+            conversation_id, transcript = map(shlex.quote, conversation)
+            run += f"[ -f {transcript} ] && exec claude --resume {conversation_id}; "
+        run += "exec claude"
+    elif start:
+        run = f"exec {shlex.quote(start)}"
+    command = ["shpool", "attach", "-d", args.dir]
+    if run:
+        # shpool splits the command as a shell would, with the shell-words crate.
+        command += ["-c", shlex.join(["bash", "-lic", run])]
+    if args.force:
+        command.append("-f")
+    command.append(args.session)
+    # Replaced by shpool, so that the window gets the session's status.
+    try:
+        os.execvp(command[0], command)
+    except OSError as error:
+        fail(f"could not run shpool: {error.strerror}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Choose the shpool sessions to open Questmarchy windows for, or attach to one.")
+    commands = parser.add_subparsers(dest="command", required=True, metavar="command")
+
+    prepare_parser = commands.add_parser(
+        "prepare", help="choose the sessions to open windows for, and print them as JSON",
+        description="Choose the sessions named <prefix><number> to open windows for, and "
+                    "print {dir, agent, sessions, notices} as JSON. Change nothing.")
+    prepare_parser.add_argument("prefix", help="the sessions' names before their numbers")
+    prepare_parser.add_argument("dir", help="the directory a new session starts in")
+    prepare_parser.add_argument("agent", nargs="?", default="", help="the agent a new session starts")
+    prepare_parser.set_defaults(run=prepare)
+
+    attach_parser = commands.add_parser(
+        "attach", help="attach to a session, or create it",
+        description="Attach to the session, or create it in <dir>, resuming the conversation "
+                    "linked to it, or else running <agent>, or the default shell without one.")
+    attach_parser.add_argument(
+        "-f", "--force", action="store_true", help="detach the terminal attached to it first")
+    attach_parser.add_argument("session", help="the session's name")
+    attach_parser.add_argument("dir", help="the directory a new session starts in")
+    attach_parser.add_argument("agent", nargs="?", default="", help="the agent a new session starts")
+    attach_parser.set_defaults(run=attach)
+
+    args = parser.parse_args()
+    return args.run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
