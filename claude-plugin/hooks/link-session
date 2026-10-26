@@ -1,0 +1,44 @@
+#!/bin/sh
+# link-session: keep the link between the Questmarchy session an agent runs in
+# and the agent's conversation, so that quest-session can resume the
+# conversation when the mux has lost the session, as after a reboot. The
+# agent's hooks run it: `save <agent>` whenever a conversation starts, with the
+# hook's input on standard input, and `drop` when the user quits.
+#
+# quest-session sets QUESTMARCHY_SESSION in the agent's command to
+# <mux>/<session>, which names the link. Without it the agent is not running in
+# a Questmarchy session, and nothing is done.
+set -u
+
+session=${QUESTMARCHY_SESSION:-}
+case $session in
+  .* | */.* | */*/*) exit 0 ;;
+  ?*/?*) ;;
+  *) exit 0 ;;
+esac
+
+# Not under XDG_STATE_HOME, which the shell that quest-window and quest-session
+# read the links from may not set.
+dir=$HOME/.local/state/questmarchy/sessions/${session%%/*}
+link=$dir/${session#*/}.json
+
+case ${1:-} in
+  save)
+    # The link holds the hook's input as the agent gave it, with the agent's
+    # name. It is replaced whole, so a reader never sees a partial one.
+    mkdir -p "$dir" && tmp=$(mktemp "$dir/.link.XXXXXX") || exit 1
+    if { printf '{"agentSessionType": "%s", "hookInput": ' "${2:?}"; cat; printf '}\n'; } >"$tmp"; then
+      mv -f "$tmp" "$link"
+    else
+      rm -f "$tmp"
+      exit 1
+    fi
+    ;;
+  drop)
+    rm -f "$link"
+    ;;
+  *)
+    echo "usage: link-session save <agent> | drop" >&2
+    exit 1
+    ;;
+esac

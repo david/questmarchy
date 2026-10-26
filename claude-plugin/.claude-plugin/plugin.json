@@ -1,0 +1,8 @@
+{
+  "name": "questmarchy",
+  "description": "Lets Questmarchy resume a session's conversation after shpool loses the session",
+  "author": { "name": "David Leal" },
+  "homepage": "https://github.com/david/questmarchy",
+  "repository": "https://github.com/david/questmarchy",
+  "license": "MIT"
+}

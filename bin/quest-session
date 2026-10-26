@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # quest-session: attach this terminal to a shpool session, on a host or on
 # this computer, creating the session in a directory with an agent running
-# when it does not exist. quest-window runs it in each window it opens. When
-# the connection to the host is lost, it reconnects until the connection comes
-# back or a key is pressed. When the agent exits, so does the session, and the
-# window closes.
+# when it does not exist. A session that the agent's hooks have linked to a
+# conversation is created resuming that conversation, so that a session shpool
+# lost, as in a reboot, comes back where it was. quest-window runs it in each
+# window it opens. When the connection to the host is lost, it reconnects until
+# the connection comes back or a key is pressed. When the agent exits, so does
+# the session, and the window closes.
 set -uo pipefail
 
 usage() {
@@ -13,7 +15,8 @@ Usage: quest-session <host> <session> <dir> [<agent>]
 
 Attach to the shpool session <session> on <host>, or on this computer when
 <host> is localhost, or create it in <dir> running <agent>, or the default
-shell without one.
+shell without one. When the session is linked to a conversation, it is created
+resuming that conversation instead.
 EOF
 }
 
@@ -26,12 +29,53 @@ fi
 host=$1 session=$2 dir=$3 agent=${4:-}
 [[ $host != localhost ]] || host=
 
+# The session's link, which the hooks of Questmarchy's plugin for Claude Code
+# keep where the session lives, relative to the home directory; see
+# claude-plugin/hooks/link-session.
+link_path=.local/state/questmarchy/sessions/shpool/$session.json
+
+# Print the session's link, or nothing when it has none. Fail only when the
+# host cannot be reached, as ssh does then with 255.
+read_link() {
+  if [[ -z $host ]]; then
+    cat "$HOME/$link_path" 2>/dev/null
+    return 0
+  fi
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes "$host" "cat '$link_path' 2>/dev/null"
+  (( $? != 255 ))
+}
+
+# Set command to attach to the session, or to create it with the agent.
+#
 # The agent runs from an interactive login shell, whose profile puts it on PATH
 # wherever it is installed, and whose rc sets up the environment a terminal
 # would have, such as mise's per-directory variables. quest-window passes only
-# names that are safe here.
-command=(shpool attach -d "$dir")
-[[ -z $agent ]] || command+=(-c "bash -lic 'exec $agent'")
+# names that are safe here, and a link's are checked. Claude runs with
+# QUESTMARCHY_SESSION, so that its hooks keep the session's link. A linked
+# conversation is resumed with the agent that had it, while its transcript is
+# there: Claude writes none for a conversation with nothing in it, and cannot
+# resume one without.
+set_command() {
+  local start=$agent id= transcript= run=
+  read -r id transcript < <(jq -r 'select(.agentSessionType == "claude") | .hookInput
+    | "\(.session_id) \(.transcript_path)"' <<<"$1" 2>/dev/null)
+  if [[ $id =~ ^[A-Za-z0-9-]+$ && $transcript =~ ^/[A-Za-z0-9/._-]+$ ]]; then
+    start=claude
+  else
+    id=
+  fi
+  case $start in
+    '') ;;
+    claude)
+      run="export QUESTMARCHY_SESSION=shpool/$session; "
+      [[ -z $id ]] || run+="[ -f $transcript ] && exec claude --resume $id; "
+      run+="exec claude"
+      ;;
+    *) run="exec $start" ;;
+  esac
+  command=(shpool attach -d "$dir")
+  [[ -z $run ]] || command+=(-c "bash -lic '$run'")
+}
 
 # Wait for a key, so that the window stays open long enough to read why it is
 # about to close.
@@ -41,6 +85,7 @@ hold() {
 }
 
 if [[ -z $host ]]; then
+  set_command "$(read_link)"
   "${command[@]}" "$session"
   status=$?
   (( status == 0 )) || hold "The session ended with status $status."
@@ -51,12 +96,18 @@ fi
 # session's status. A dropped connection can leave the old client attached, so
 # reconnecting forces it off. The window keeps a connection of its own, not one
 # shared through a ControlMaster, so that closing the window ends it and
-# detaches the session at once.
+# detaches the session at once. The link is read again before each attempt,
+# since the host may have lost the session meanwhile.
 force=()
 while :; do
-  ssh -t -o ControlPath=none -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
-    -o ClearAllForwardings=yes "$host" "bash -lc $(printf '%q' "$(printf '%q ' "${command[@]}" "${force[@]}" "$session")")"
-  status=$?
+  if link=$(read_link); then
+    set_command "$link"
+    ssh -t -o ControlPath=none -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+      -o ClearAllForwardings=yes "$host" "bash -lc $(printf '%q' "$(printf '%q ' "${command[@]}" "${force[@]}" "$session")")"
+    status=$?
+  else
+    status=255
+  fi
   if (( status != 255 )); then
     (( status == 0 )) || hold "The session ended with status $status."
     exit "$status"

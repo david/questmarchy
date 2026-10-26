@@ -1,0 +1,20 @@
+{
+  "description": "Keep the link between a Questmarchy session and the conversation running in it",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/link-session", "save", "claude"] }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "prompt_input_exit|logout",
+        "hooks": [
+          { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/link-session", "drop"] }
+        ]
+      }
+    ]
+  }
+}

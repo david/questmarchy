@@ -1,0 +1,12 @@
+{
+  "name": "questmarchy",
+  "description": "Questmarchy's plugin for Claude Code",
+  "owner": { "name": "David Leal" },
+  "plugins": [
+    {
+      "name": "questmarchy",
+      "source": "./claude-plugin",
+      "description": "Lets Questmarchy resume a session's conversation after shpool loses the session"
+    }
+  ]
+}

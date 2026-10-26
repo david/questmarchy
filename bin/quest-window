@@ -135,16 +135,20 @@ names_jq='
   def slug: test("^[a-z0-9]+(-[a-z0-9]+)*$");
 '
 
-# Get ready to open a session on the host in the given directory. Print "dir:
-# <dir>" with the directory's full path; "agent: <agent>" with the agent to
-# start, empty when it is not installed or there is no default, and then
-# "reason: <text>" saying why; and, after a line "sessions:", the host's
-# sessions as shpool list --json prints them. The shell is a login shell, whose
-# profile puts shpool and the agent on PATH wherever they are installed.
+# Get ready to open the sessions named <prefix><number> on the host, in the
+# given directory. Print "dir: <dir>" with the directory's full path; "agent:
+# <agent>" with the agent to start, empty when it is not installed or there is
+# no default, and then "reason: <text>" saying why; "unlinked: <text>" when the
+# agent is Claude and Questmarchy's plugin for it, whose hooks link sessions to
+# conversations, is not installed; "link: <session>" for each session that is
+# linked to a conversation, from the files those hooks keep; and, after a line
+# "sessions:", the host's sessions as shpool list --json prints them. The shell
+# is a login shell, whose profile puts shpool and the agent on PATH wherever
+# they are installed.
 prepare_session() {
-  on_host "$1" -l -s -- "$2" "$3" <<'EOF'
+  on_host "$1" -l -s -- "$2" "$3" "$4" <<'EOF'
 set -eu
-dir=$1 agent=$2
+dir=$1 agent=$2 prefix=$3
 case $dir in "~") dir=$HOME ;; "~/"*) dir=$HOME/${dir#"~/"} ;; esac
 command -v shpool >/dev/null || { echo "shpool is not on PATH on $(uname -n)" >&2; exit 1; }
 [ -d "$dir" ] || { echo "no directory $dir" >&2; exit 1; }
@@ -157,22 +161,36 @@ elif ! command -v "$agent" >/dev/null; then
   agent=
 fi
 echo "agent: $agent"
+if [ "$agent" = claude ] &&
+  ! grep -qs '"questmarchy@questmarchy"' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"; then
+  echo "unlinked: Questmarchy's plugin for Claude Code is not installed on $(uname -n)"
+fi
+for link in "$HOME/.local/state/questmarchy/sessions/shpool/$prefix"*.json; do
+  [ -f "$link" ] || continue
+  link=${link##*/}
+  echo "link: ${link%.json}"
+done
 echo "sessions:"
 shpool list --json
 EOF
 }
 
-# From shpool list --json, choose the session named <prefix>:<number> for a
-# window: the disconnected one with the lowest number, so a closed window's
-# agent is picked up again, or else a new one with the lowest free number.
-# Print "<number> existing" or "<number> new".
-choose_session_jq='
+# From shpool list --json and the linked sessions, as positional arguments,
+# choose the sessions named <prefix><number> to open a window for: each
+# disconnected one, so that a closed window's agent is picked up again, and
+# each linked one that shpool lost, so that its conversation is resumed; or,
+# when there is neither, a new one with the lowest number free of both. Print
+# "<number> existing", "<number> lost", or "<number> new" for each.
+choose_sessions_jq='
+  def number: ltrimstr($prefix) | select(test("^[1-9][0-9]*$")) | tonumber;
   [.sessions[] | select(.name | startswith($prefix))
-    | {number: (.name | ltrimstr($prefix)), status: (.status | ascii_downcase)}
-    | select(.number | test("^[1-9][0-9]*$")) | .number |= tonumber]
-  | (map(select(.status == "disconnected")) | min_by(.number) | .number) as $detached
-  | if $detached then "\($detached) existing"
-    else "\([range(1; length + 2)] - map(.number) | min) new" end
+    | {number: (.name | number), status: (.status | ascii_downcase)}] as $listed
+  | [$ARGS.positional[] | select(startswith($prefix)) | number] as $linked
+  | ($listed | map(.number)) as $numbers
+  | [($listed[] | select(.status == "disconnected") | "\(.number) existing"),
+     (($linked - $numbers | unique)[] | "\(.) lost")]
+  | if length > 0 then .[]
+    else "\([range(1; ($numbers + $linked | unique | length) + 2)] - $numbers - $linked | min) new" end
 '
 
 list=
@@ -245,7 +263,7 @@ here=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 
 address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class == $class) | .address' | head -n1)
 
-# Run in the window: attach to the session that prepare_session chose. The
+# Run in a window: attach to a session that choose_sessions_jq chose. The
 # launcher runs it with xdg-terminal-exec -e, which still reads options such as
 # -h in the command, so quest-session takes none.
 window_command() {
@@ -263,26 +281,35 @@ if [[ -n $address ]]; then
   exit
 fi
 
-# Only a new session needs the directory, which the quest command finds in
-# the realm's quests directory.
+# Only a session that is created needs the directory, which the quest command
+# finds in the realm's quests directory.
 [[ -n $entry ]] || entry=$(find_entry)
 dir=$(jq -r .dir <<<"$entry")
 
 if [[ -n $dry_run ]]; then
-  echo "would attach the first disconnected $prefix:<number> on $machine, or create one in $dir with ${agent:-no agent}"
+  echo "would attach every disconnected $prefix:<number> on $machine and recreate every linked one shpool lost, or else create one in $dir with ${agent:-no agent}"
   window_command "$prefix:<number>" "$dir" "$agent"
-  echo "would run: ${command[*]}"
+  echo "would run for each: ${command[*]}"
 else
-  output=$(prepare_session "$host" "$dir" "$agent" 2>&1) ||
+  output=$(prepare_session "$host" "$dir" "$agent" "$prefix:" 2>&1) ||
     fail "could not open a session for $prefix on $machine: $output"
   field() { sed -n "s/^$1: //p" <<<"$output"; }
-  chosen=$(sed '1,/^sessions:$/d' <<<"$output" | jq -r --arg prefix "$prefix:" "$choose_session_jq" 2>/dev/null) ||
+  mapfile -t links < <(field link)
+  chosen=$(sed '1,/^sessions:$/d' <<<"$output" |
+    jq -r --arg prefix "$prefix:" "$choose_sessions_jq" --args "${links[@]}" 2>/dev/null) ||
     fail "could not read the sessions on $machine: $output"
   # A running session ignores the agent and keeps its own. A session whose agent
-  # exited while no window was attached is still listed, and starts it again.
-  reason=$(field reason)
-  [[ $chosen != *new || -z $reason ]] || notice "the session starts a shell, because $reason"
-  window_command "$prefix:${chosen% *}" "$(field dir)" "$(field agent)"
+  # exited while no window was attached is still listed, and starts it again. A
+  # lost session is recreated with the agent its link names.
+  if [[ $chosen == *new ]]; then
+    reason=$(field reason) unlinked=$(field unlinked)
+    [[ -z $reason ]] || notice "the session starts a shell, because $reason"
+    [[ -z $unlinked ]] || notice "the session's conversation will not come back if shpool loses the session, because $unlinked"
+  fi
   record_opened || true
-  exec "${command[@]}"
+  mapfile -t chosen <<<"$chosen"
+  for choice in "${chosen[@]}"; do
+    window_command "$prefix:${choice% *}" "$(field dir)" "$(field agent)"
+    "${command[@]}" || notice "could not open a window for $prefix:${choice% *}"
+  done
 fi
