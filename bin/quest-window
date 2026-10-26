@@ -100,18 +100,12 @@ find_quest() {
 # Print {worlds: [{world, host, path}], projects: [{world, name}], quests:
 # [{world, project, slug}], failed: [<world>]}, from the quest command's
 # lists, leaving out unsafe names. failed holds the worlds that could not be
-# listed; a realm that could not be listed is left out.
+# listed; a realm that could not be listed is left out. The quest command makes
+# the three lists at once. Their statuses go unchecked: it puts a world it could
+# not list in failed, and when it fails, it prints nothing, which makes input
+# fail.
 list_all() {
-  local listed status=0 pid
-  local -a pids=()
-  listed=$(mktemp -d)
-  "${quest[@]}" world list >"$listed/worlds" & pids+=("$!")
-  "${quest[@]}" realm list >"$listed/realms" & pids+=("$!")
-  "${quest[@]}" list >"$listed/quests" & pids+=("$!")
-  for pid in "${pids[@]}"; do
-    wait "$pid" || status=1
-  done
-  (( status == 0 )) && jq -n "$names_jq"'
+  jq -n "$names_jq"'
     input as $worlds | input as $realms | input as $quests
     | {
         worlds: [$worlds[] | {world, host, path}],
@@ -119,9 +113,7 @@ list_all() {
         quests: [$quests.quests[] | select((.realm | project) and (.slug | slug))
           | {world, project: .realm, slug}],
         failed: [$realms.failed[], $quests.failed[] | select(has("realm") | not) | .world] | unique
-      }' "$listed/worlds" "$listed/realms" "$listed/quests" || status=1
-  rm -rf "$listed"
-  return "$status"
+      }' <("${quest[@]}" world list) <("${quest[@]}" realm list) <("${quest[@]}" list)
 }
 
 # Record that the window for the project or quest was opened now, in place of
