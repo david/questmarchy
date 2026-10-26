@@ -23,10 +23,9 @@ Usage: quest-window [-n] [-w <world>] <project> [<slug>]
 
 Open the window for a project's root, or for its quest <slug>.
 
-A world is [<host>:]<path>, a directory of projects on <host>, or on this
-computer when there is no host or <host> is this computer's name;
-\`quest world list\` prints yours. Without -w, the project is looked for in
-all of them.
+A world is a directory of projects on a host, or on this computer, as
+\`quest world list\` prints it. Without -w, the project is looked for in all
+of them.
 
   -w  the world of the project
   -n  print what would be done instead of doing it
@@ -43,18 +42,6 @@ notice() {
 fail() {
   notice "$@"
   exit 1
-}
-
-# Set host and path from a world, leaving host empty for this computer. Fails
-# for a world that could not be passed safely to the shell running an action.
-parse_world() {
-  if [[ $1 =~ ^([^:/]+):(.*)$ ]]; then
-    host=${BASH_REMATCH[1]} path=${BASH_REMATCH[2]}
-  else
-    host= path=$1
-  fi
-  [[ ${host%%.*} == "$(uname -n | cut -d. -f1)" || $host == localhost ]] && host=
-  [[ -z $host || $host =~ ^[A-Za-z0-9._-]+$ ]] && [[ -n $path && $path != *[$'\t\n']* ]]
 }
 
 # Run sessionctl with the remaining arguments in the home directory on the
@@ -214,7 +201,13 @@ if [[ -z $world ]]; then
   entry=$(find_entry)
   world=$(jq -r .world <<<"$entry")
 fi
-parse_world "$world" || fail "not a world: $world"
+# The quest command lists the worlds from a file here, so that focusing an open
+# window reaches no host. host is empty for this computer, and is checked since
+# it goes into ssh's arguments and the window's class.
+worlds=$("${quest[@]}" world list) || fail "could not list the worlds"
+host=$(jq -re --arg world "$world" 'first(.[] | select(.world == $world)) | .host // ""' <<<"$worlds") ||
+  fail "not a world in quest world list: $world"
+[[ -z $host || $host =~ ^[A-Za-z0-9._-]+$ ]] || fail "not a host name: $host"
 
 machine=${host:-$(uname -n)}
 prefix=questmarchy:$project${slug:+:$slug}

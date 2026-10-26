@@ -168,12 +168,13 @@ bin/quest-window [-n] [-w <world>] <project> [<slug>]
 bin/quest-window -l
 ```
 
-A world is `[<host>:]<path>`, as `quest world list` prints it, such as
-`devbox:/home/me/Projects`. Without `-w`, the project is looked for in every
-world, and `quest-window` stops when more than one has it. `-n` prints what
-would happen without opening or focusing a window. To open a new session,
-`quest-window` asks `quest show`, or `quest realm show` for a project, for its
-directory. It chooses the sessions to open with
+A world is one of those that `quest world list` prints, such as
+`devbox:/home/me/Projects`. `quest-window` takes its host from that list, so
+focusing an open window reaches no host. Without `-w`, the project is looked
+for in every world, and `quest-window` stops when more than one has it. `-n`
+prints what would happen without opening or focusing a window. To open a new
+session, `quest-window` asks `quest show`, or `quest realm show` for a
+project, for its directory. It chooses the sessions to open with
 [`sessionctl prepare`](#sessionctl) where the project lives.
 
 Each time it opens or focuses a window, `quest-window` records the time in
