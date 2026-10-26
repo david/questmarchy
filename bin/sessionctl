@@ -116,12 +116,14 @@ def linked_conversation(session: str) -> tuple[str, str] | None:
     # that a damaged link starts the agent instead of failing to resume.
     try:
         link = json.loads((LINKS / f"{session}.json").read_text(encoding="utf-8"))
-        if link["agentSessionType"] == "claude":
-            hook = link["hookInput"]
-            if (re.fullmatch(r"[A-Za-z0-9-]+", hook["session_id"])
-                    and re.fullmatch(r"/[A-Za-z0-9/._-]+", hook["transcript_path"])):
-                return hook["session_id"], hook["transcript_path"]
-    except (OSError, ValueError, LookupError, TypeError):
+        # A link is the hook's input. One saved by an earlier version of the hook
+        # wraps it as {agentSessionType, hookInput}, whose type is always claude,
+        # since only Claude's hooks save links.
+        hook = link.get("hookInput", link)
+        if (re.fullmatch(r"[A-Za-z0-9-]+", hook["session_id"])
+                and re.fullmatch(r"/[A-Za-z0-9/._-]+", hook["transcript_path"])):
+            return hook["session_id"], hook["transcript_path"]
+    except (OSError, ValueError, LookupError, TypeError, AttributeError):
         pass
     return None
 

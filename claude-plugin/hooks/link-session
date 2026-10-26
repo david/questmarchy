@@ -1,9 +1,9 @@
 #!/bin/sh
 # link-session: keep the link between the Questmarchy session an agent runs in
 # and the agent's conversation, so that quest-session can resume the
-# conversation when the mux has lost the session, as after a reboot. The
-# agent's hooks run it: `save <agent>` whenever a conversation starts, with the
-# hook's input on standard input, and `drop` when the user quits.
+# conversation when the mux has lost the session, as after a reboot. Claude's
+# hooks run it: `save` whenever a conversation starts, with the hook's input on
+# standard input, and `drop` when the user quits.
 #
 # quest-session sets QUESTMARCHY_SESSION in the agent's command to
 # <mux>/<session>, which names the link. Without it the agent is not running in
@@ -24,19 +24,19 @@ link=$dir/${session#*/}.json
 
 case ${1:-} in
   save)
-    # The link holds the hook's input as the agent gave it, with the agent's
-    # name. It is written in place: sessionctl reads it only to recreate a
-    # session that shpool lost, when nothing is writing it, and a running
-    # session ignores the command made from it. A link cut short, as by a
-    # crash, names no conversation, and the session starts the agent instead.
-    mkdir -p "$dir" &&
-      { printf '{"agentSessionType": "%s", "hookInput": ' "${2:?}"; cat; printf '}\n'; } >"$link"
+    # The link holds the hook's input as Claude gave it. It is written in
+    # place: sessionctl reads it only to recreate a session that shpool lost,
+    # when nothing is writing it, and a running session ignores the command
+    # made from it. A link cut short, as by a crash, names no conversation, and
+    # the session starts the agent instead. A Claude that started before the
+    # plugin's update may still pass `save claude`; the name is ignored.
+    mkdir -p "$dir" && cat >"$link"
     ;;
   drop)
     rm -f "$link"
     ;;
   *)
-    echo "usage: link-session save <agent> | drop" >&2
+    echo "usage: link-session save | drop" >&2
     exit 1
     ;;
 esac
