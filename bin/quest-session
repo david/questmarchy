@@ -49,7 +49,7 @@ attach() {
   else
     ssh -t -o ControlPath=none -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
       -o ClearAllForwardings=yes "$host" \
-      "bash -lc $(printf '%q' "exec ~/.local/share/questmarchy/bin/sessionctl attach $(printf '%q ' "$@")")"
+      bash -lc "'exec ~/.local/share/questmarchy/bin/sessionctl attach \"\$@\"'" sessionctl "${@@Q}"
   fi
 }
 
