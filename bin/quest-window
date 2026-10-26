@@ -9,7 +9,6 @@
 set -euo pipefail
 
 world=
-dry_run=
 # When each project's or quest's window was last opened or focused, as
 # [{place, project, slug, opened}], with no slug for a project. place is the
 # world, under the name it had before the quest command. The bar widget lists
@@ -18,7 +17,7 @@ opened_file=${XDG_STATE_HOME:-$HOME/.local/state}/questmarchy/opened.json
 
 usage() {
   cat <<EOF
-Usage: quest-window [-n] [-w <world>] <project> [<slug>]
+Usage: quest-window [-w <world>] <project> [<slug>]
        quest-window -l
 
 Open the window for a project's root, or for its quest <slug>.
@@ -28,7 +27,6 @@ A world is a directory of projects on a host, or on this computer, as
 of them.
 
   -w  the world of the project
-  -n  print what would be done instead of doing it
   -l  print the worlds, projects, and quests as JSON
 EOF
 }
@@ -148,9 +146,8 @@ names_jq='
 '
 
 list=
-while getopts nlw:h opt; do
+while getopts lw:h opt; do
   case $opt in
-    n) dry_run=1 ;;
     l) list=1 ;;
     w) world=$OPTARG ;;
     h) usage; exit 0 ;;
@@ -223,21 +220,9 @@ here=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 
 address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class == $class) | .address' | head -n1)
 
-# Run in a window: attach to a session that sessionctl chose. The
-# launcher runs it with xdg-terminal-exec -e, which still reads options such as
-# -h in the command, so quest-session takes none.
-window_command() {
-  command=(omarchy-launch-tui --app-id="$class" bash "$here/quest-session" "${host:-localhost}" "$1" "$2" ${3:+"$3"})
-}
-
 if [[ -n $address ]]; then
-  command=(hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })")
-  if [[ -n $dry_run ]]; then
-    echo "would run: ${command[*]}"
-  else
-    "${command[@]}" >/dev/null
-    record_opened || true
-  fi
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null
+  record_opened || true
   exit
 fi
 
@@ -246,26 +231,24 @@ fi
 [[ -n $entry ]] || entry=$(find_entry)
 dir=$(jq -r .dir <<<"$entry")
 
-if [[ -n $dry_run ]]; then
-  echo "would attach every disconnected $prefix:<number> on $machine and recreate every linked one shpool lost, or else create one in $dir with ${agent:-no agent}"
-  window_command "$prefix:<number>" "$dir" "$agent"
-  echo "would run for each: ${command[*]}"
-else
-  output=$(run_sessionctl "$host" prepare "$prefix:" "$dir" "$agent" 2>&1) ||
-    fail "could not open a session for $prefix on $machine: $output"
-  # sessionctl answers on the last line, after anything the login shell's
-  # profile printed.
-  answer() { jq -r "$1" <<<"${output##*$'\n'}"; }
-  mapfile -t sessions < <(answer '.sessions[]' 2>/dev/null)
-  (( ${#sessions[@]} > 0 )) || fail "could not read the sessions on $machine: $output"
-  mapfile -t notices < <(answer '.notices[]')
-  for message in "${notices[@]}"; do
-    notice "$message"
-  done
-  record_opened || true
-  dir=$(answer .dir) agent=$(answer .agent)
-  for session in "${sessions[@]}"; do
-    window_command "$session" "$dir" "$agent"
-    "${command[@]}" || notice "could not open a window for $session"
-  done
-fi
+output=$(run_sessionctl "$host" prepare "$prefix:" "$dir" "$agent" 2>&1) ||
+  fail "could not open a session for $prefix on $machine: $output"
+# sessionctl answers on the last line, after anything the login shell's
+# profile printed.
+answer() { jq -r "$1" <<<"${output##*$'\n'}"; }
+mapfile -t sessions < <(answer '.sessions[]' 2>/dev/null)
+(( ${#sessions[@]} > 0 )) || fail "could not read the sessions on $machine: $output"
+mapfile -t notices < <(answer '.notices[]')
+for message in "${notices[@]}"; do
+  notice "$message"
+done
+record_opened || true
+dir=$(answer .dir) agent=$(answer .agent)
+# Each window attaches to its session through quest-session. The launcher runs
+# it with xdg-terminal-exec -e, which still reads options such as -h in the
+# command, so quest-session takes none.
+for session in "${sessions[@]}"; do
+  omarchy-launch-tui --app-id="$class" \
+    bash "$here/quest-session" "${host:-localhost}" "$session" "$dir" ${agent:+"$agent"} ||
+    notice "could not open a window for $session"
+done
