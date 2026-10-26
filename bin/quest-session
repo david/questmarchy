@@ -37,31 +37,32 @@ hold() {
   read -rsn1
 }
 
-# On this computer, sessionctl is the plugin's own.
-if [[ -z $host ]]; then
-  "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/sessionctl" attach "$session" "$dir" "$agent"
-  status=$?
-  (( status == 0 )) || hold "The session ended with status $status."
-  exit "$status"
-fi
+# Run sessionctl attach with the arguments. On this computer, sessionctl is the
+# plugin's own. On a host, it is the copy that quest-window put there before
+# opening the window, run from a login shell, whose profile puts python3 and
+# shpool on PATH wherever they are installed. The window keeps a connection of
+# its own, not one shared through a ControlMaster, so that closing the window
+# ends it and detaches the session at once.
+attach() {
+  if [[ -z $host ]]; then
+    "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/sessionctl" attach "$@"
+  else
+    ssh -t -o ControlPath=none -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+      -o ClearAllForwardings=yes "$host" \
+      "bash -lc $(printf '%q' "exec ~/.local/share/questmarchy/bin/sessionctl attach $(printf '%q ' "$@")")"
+  fi
+}
 
-# On a host, sessionctl is the copy that quest-window put there before opening
-# the window, run from a login shell, whose profile puts python3 and shpool on
-# PATH wherever they are installed. It reads the session's link on each
-# attempt, since the host may have lost the session meanwhile.
-#
-# ssh exits with 255 when the connection fails or drops, and otherwise with the
-# session's status. A dropped connection can leave the old client attached, so
-# reconnecting forces it off. The window keeps a connection of its own, not one
-# shared through a ControlMaster, so that closing the window ends it and
-# detaches the session at once.
+# sessionctl reads the session's link on each attempt, since the host may have
+# lost the session meanwhile. ssh exits with 255 when the connection fails or
+# drops, and otherwise with the session's status. A dropped connection can
+# leave the old client attached, so reconnecting forces it off. On this
+# computer, there is no connection to lose.
 force=()
 while :; do
-  ssh -t -o ControlPath=none -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
-    -o ClearAllForwardings=yes "$host" \
-    "bash -lc $(printf '%q' "exec ~/.local/share/questmarchy/bin/sessionctl attach $(printf '%q ' "${force[@]}" "$session" "$dir" "$agent")")"
+  attach "${force[@]}" "$session" "$dir" "$agent"
   status=$?
-  if (( status != 255 )); then
+  if [[ -z $host ]] || (( status != 255 )); then
     (( status == 0 )) || hold "The session ended with status $status."
     exit "$status"
   fi
