@@ -1,11 +1,11 @@
 #!/bin/sh
 # link-session: keep the link between the Questmarchy session an agent runs in
-# and the agent's conversation, so that quest-session can resume the
-# conversation when the mux has lost the session, as after a reboot. Claude's
-# hooks run it: `save` whenever a conversation starts, with the hook's input on
-# standard input, and `drop` when the user quits.
+# and the agent's conversation, so that sessionctl can resume the conversation
+# when the mux has lost the session, as after a reboot. Claude's hooks run it:
+# `save` whenever a conversation starts, with the hook's input on standard
+# input, and `drop` when the user quits.
 #
-# quest-session sets QUESTMARCHY_SESSION in the agent's command to
+# sessionctl sets QUESTMARCHY_SESSION in the agent's command to
 # <mux>/<session>, which names the link. Without it the agent is not running in
 # a Questmarchy session, and nothing is done.
 set -u
@@ -17,8 +17,8 @@ case $session in
   *) exit 0 ;;
 esac
 
-# Not under XDG_STATE_HOME, which the shell that quest-window and quest-session
-# read the links from may not set.
+# Not under XDG_STATE_HOME, which the shell that sessionctl reads the links
+# from may not set.
 dir=$HOME/.local/state/questmarchy/sessions/${session%%/*}
 link=$dir/${session#*/}.json
 
