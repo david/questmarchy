@@ -27,8 +27,9 @@ its window is already open, it is focused instead.
   under the name you connect with, so accept the key once for each name you
   use in your worlds, even for a host you already reach through an alias.
 - To resume Claude Code's conversations after shpool loses their sessions,
-  Questmarchy's plugin for Claude Code where the projects live. See
-  [Resuming conversations](#resuming-conversations).
+  and to show what its agents are doing, Questmarchy's plugin for Claude Code
+  where the projects live. See [Resuming
+  conversations](#resuming-conversations) and [Agent status](#agent-status).
 
 ## Install
 
@@ -64,7 +65,9 @@ example from a key binding.
 
 - The Realms (projects) and Quests tabs switch lists. Tab switches them from
   the keyboard. The panel reopens on the last tab used.
-- A flag marks each realm and a sword each quest, as on their tabs.
+- A flag marks each realm and a sword each quest, as on their tabs. Its
+  color says what its windows and agents are doing; see [Agent
+  status](#agent-status).
 - Type to search both lists. While you search, the tabs give way to the
   matching realms, then the matching quests. Every word typed must appear
   in the name, and Tab does nothing.
@@ -158,6 +161,47 @@ it creates a linked session, it starts `claude --resume` with the linked
 conversation, whatever the default agent. A conversation with nothing in it
 has no transcript to resume, so Claude starts fresh instead.
 
+## Agent status
+
+The flag or sword at the right of each row shows, first match wins:
+
+| Color | When |
+| --- | --- |
+| Red | An agent stopped in the middle of a turn, as when its computer restarted. It stays red until it is given a new prompt. |
+| Yellow | An agent is working, or background work it started still runs. |
+| Green | An agent's turn ended, or it asks for a permission or an answer, after its window last had the focus. |
+| Bright | A window is open. |
+| Dim | No window is open. |
+
+Each row counts its own sessions: a project's, `questmarchy:<project>:<n>`,
+or a quest's, `questmarchy:<project>:<slug>:<n>`. An agent keeps its status
+with no window open, since its session keeps it running, and through a restart
+of either computer. Red, yellow, and green are the theme's.
+
+Only Claude Code reports a status, through Questmarchy's plugin; install it
+as [Resuming conversations](#resuming-conversations) says. Its hooks, in
+`claude-plugin/hooks/agent-status`, keep each session's status where the
+session lives, in `~/.local/state/questmarchy/status/shpool/<session>.json`,
+as `{state, since, transcript}`. `state` is `running` from a prompt on, and
+again after a tool runs; `waiting` while a permission or `AskUserQuestion`
+waits on the user; `done` when the turn ends, unless background work it
+started still runs; and `interrupted` when Claude starts again over a turn
+that was `running` or `waiting`, as on a resume after a reboot. `since` is
+when the state began, by that computer's clock. Quitting with `/exit` or
+`/logout` deletes the file, as it does the session's link.
+
+[`sessionctl status`](#sessionctl) prints the statuses. A turn `running` or
+`waiting` in a session that shpool lost is `interrupted`. No hook runs when
+you interrupt a turn with Escape, so a `running` turn whose transcript ends
+with Claude's "[Request interrupted by user]" after `since` is left out.
+
+While the panel is open, the widget runs `quest-window -s` every 3 seconds
+and caches the statuses in `~/.cache/questmarchy/status.json`. It sees open
+windows and the focus through the compositor, and records when each window
+last lost the focus in `~/.local/state/questmarchy/seen.json`. A turn is
+green when its `since` is later than that, and its window does not have the
+focus.
+
 ## quest-window
 
 The widget does its work through `bin/quest-window`, which can also be run by
@@ -166,6 +210,7 @@ hand:
 ```sh
 bin/quest-window [-w <world>] <project> [<slug>]
 bin/quest-window -l
+bin/quest-window -s
 ```
 
 A world is one of those that `quest world list` prints, such as
@@ -190,6 +235,11 @@ left out. `failed` holds the worlds that could not be listed. A realm whose
 quests could not be listed, as when its `quests` directory cannot be read,
 shows none; `quest list` says why.
 
+`-s` runs `sessionctl status` on every computer that has worlds at once and
+prints `{hosts: [{host, sessions: [{session, state, since}]}], failed:
+[<host>]}`, each computer by the name in its windows' classes. `failed` holds
+the computers that could not be reached.
+
 ## sessionctl
 
 `bin/sessionctl` does the part of opening a window that runs where the
@@ -200,6 +250,7 @@ a host with one ssh call each. It is written in Python, since a host has
 ```sh
 bin/sessionctl prepare <prefix> <dir> [<agent>]
 bin/sessionctl attach [-f] <session> <dir> [<agent>]
+bin/sessionctl status
 ```
 
 `prepare` checks the directory, shpool, the agent, and Questmarchy's plugin
@@ -216,12 +267,16 @@ to it, or creates it in `<dir>`, resuming its linked conversation or running
 `<agent>`. It becomes `shpool attach`, so that the window gets the session's
 status.
 
-On this computer, both run the plugin's own `sessionctl`. On another host,
+`status` prints `{sessions: [{session, state, since}]}` as JSON: the status
+of the agent in each Questmarchy session that has one, as [Agent
+status](#agent-status) describes, with `since` null for a session shpool
+lost. It changes nothing.
+
+On this computer, they run the plugin's own `sessionctl`. On another host,
 they run the copy in `~/.local/share/questmarchy/bin/sessionctl`: each time
-`quest-window` opens sessions there, it sends the plugin's copy along in the
-same ssh call, and the host replaces its own when it is missing or differs. A
-plugin update thus reaches a host the next time one of its projects or quests
-opens. Removing Questmarchy leaves the copy behind; delete
+`quest-window` runs it there, it sends the plugin's copy along in the same
+ssh call, and the host replaces its own when it is missing or differs. A
+plugin update thus reaches a host the next time the panel opens. Removing Questmarchy leaves the copy behind; delete
 `~/.local/share/questmarchy` on each host to remove it too.
 
 ## Development

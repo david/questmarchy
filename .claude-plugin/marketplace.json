@@ -6,7 +6,7 @@
     {
       "name": "questmarchy",
       "source": "./claude-plugin",
-      "description": "Lets Questmarchy resume a session's conversation after shpool loses the session"
+      "description": "Lets Questmarchy resume a session's conversation after shpool loses the session, and show what its agent is doing"
     }
   ]
 }

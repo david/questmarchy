@@ -4,11 +4,13 @@
 # quest command, which finds it in a world: a directory of realms on a host, or
 # on this computer. Each window attaches to a shpool session there, through
 # quest-session; sessionctl, run there too, chooses the sessions. With -l, list
-# the worlds, projects, and quests, as the quest command does. The Questmarchy
-# bar widget runs it from the plugin folder; see README.md there.
+# the worlds, projects, and quests, as the quest command does, and with -s, the
+# status of each session's agent on every computer that has worlds. The
+# Questmarchy bar widget runs it from the plugin folder; see README.md there.
 set -euo pipefail
 
 world=
+here=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 # When each project's or quest's window was last opened or focused, as
 # [{place, project, slug, opened}], with no slug for a project. place is the
 # world, under the name it had before the quest command. The bar widget lists
@@ -19,6 +21,7 @@ usage() {
   cat <<EOF
 Usage: quest-window [-w <world>] <project> [<slug>]
        quest-window -l
+       quest-window -s
 
 Open the window for a project's root, or for its quest <slug>.
 
@@ -28,6 +31,7 @@ of them.
 
   -w  the world of the project
   -l  print the worlds, projects, and quests as JSON
+  -s  print the status of each session's agent as JSON
 EOF
 }
 
@@ -131,16 +135,46 @@ record_opened() {
     >"$tmp" && mv -f "$tmp" "$opened_file" || { rm -f "$tmp"; return 1; }
 }
 
+# Print {hosts: [{host, sessions: [{session, state, since}]}], failed:
+# [<host>]}: what sessionctl status prints on each computer that has worlds, by
+# its name, as in the windows' classes. failed holds the computers that could
+# not be reached. They are asked at once.
+list_statuses() {
+  local worlds dir host machine i=0
+  local -a hosts machines
+  worlds=$("${quest[@]}" world list) || fail "could not list the worlds"
+  mapfile -t hosts < <(jq -r '[.[] | .host // ""] | unique | .[]' <<<"$worlds")
+  dir=$(mktemp -d)
+  for host in "${hosts[@]}"; do
+    [[ -z $host || $host =~ ^[A-Za-z0-9._-]+$ ]] || continue
+    machines[i]=${host:-$(uname -n)}
+    run_sessionctl "$host" status >"$dir/$i" 2>/dev/null </dev/null &
+    i=$((i + 1))
+  done
+  wait
+  # sessionctl answers on the last line, after anything the login shell's
+  # profile printed.
+  for i in "${!machines[@]}"; do
+    machine=${machines[i]}
+    tail -n 1 "$dir/$i" | jq -c --arg host "$machine" \
+      'select(.sessions | type == "array") | {host: $host, sessions: [.sessions[]
+        | select((.session | type == "string") and (.state | type == "string"))]}' 2>/dev/null |
+      grep . || jq -nc --arg host "$machine" '{failed: $host}'
+  done | jq -s '{hosts: [.[] | select(has("host"))], failed: [.[] | .failed // empty]}'
+  rm -rf "$dir"
+}
+
 # Names that could not be passed safely to the shell running an action.
 names_jq='
   def project: test("^[A-Za-z0-9._-]+$");
   def slug: test("^[a-z0-9]+(-[a-z0-9]+)*$");
 '
 
-list=
-while getopts lw:h opt; do
+list= statuses=
+while getopts lsw:h opt; do
   case $opt in
     l) list=1 ;;
+    s) statuses=1 ;;
     w) world=$OPTARG ;;
     h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
@@ -155,6 +189,12 @@ if [[ -n $list ]]; then
   # The caller reports the worlds that failed: the bar widget shows them in
   # its panel.
   list_all
+  exit
+fi
+
+if [[ -n $statuses ]]; then
+  (( $# == 0 )) || { usage >&2; exit 2; }
+  list_statuses
   exit
 fi
 
@@ -208,7 +248,6 @@ class=TUI.questmarchy.$machine.$project${slug:+.$slug}
 # command wherever the project lives.
 agent=$(omarchy-default-agent 2>/dev/null || true)
 [[ $agent =~ ^[a-z][a-z0-9-]*$ ]] || agent=
-here=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 
 address=$(hyprctl clients -j | jq -r --arg class "$class" '.[] | select(.class == $class) | .address' | head -n1)
 

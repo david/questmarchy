@@ -1,6 +1,6 @@
 {
   "name": "questmarchy",
-  "description": "Lets Questmarchy resume a session's conversation after shpool loses the session",
+  "description": "Lets Questmarchy resume a session's conversation after shpool loses the session, and show what its agent is doing",
   "author": { "name": "David Leal" },
   "homepage": "https://github.com/david/questmarchy",
   "repository": "https://github.com/david/questmarchy",

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -13,7 +14,9 @@ import qs.Ui
 // a cache file that the instance on every monitor watches. Choosing a project
 // runs `quest-window -w <world> <project>`, which opens the agent in the
 // project root, and choosing a quest runs `quest-window -w <world> <project>
-// <slug>`; either focuses the window if it is open.
+// <slug>`; either focuses the window if it is open. Each row's icon shows
+// whether its window is open and what its agent is doing, from `quest-window
+// -s` while the panel is open.
 Panel {
   id: root
   manageIpc: false
@@ -23,8 +26,12 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string cachePath:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/questmarchy/quests.json"
+  readonly property string statusPath:
+    (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/questmarchy/status.json"
   readonly property string openedPath:
     (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/questmarchy/opened.json"
+  readonly property string seenPath:
+    (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/questmarchy/seen.json"
   readonly property string questWindow:
     decodeURIComponent(Qt.resolvedUrl("bin/quest-window").toString().replace(/^file:\/\//, ""))
   property string hostname: "localhost"
@@ -32,8 +39,8 @@ Panel {
   // The quest command's worlds, [{world, host, path}] with a null host for
   // this computer, as the last lists gave them.
   property var worlds: []
-  // Each world by name, as {label, failedLabel}: the name of its computer, and
-  // how a failure to list it is reported.
+  // Each world by name, as {label, failedLabel}: the name of its computer, as
+  // in its windows' classes, and how a failure to list it is reported.
   readonly property var worldsByName: {
     var byName = {}
     worlds.forEach(function(world) {
@@ -57,6 +64,31 @@ Panel {
   // its own window or any of its quests', whichever is later, by
   // openedKey(world, project).
   property var windowTimes: ({ projects: {}, quests: {} })
+  // The status of the agent in each session, {state, since}, by computer and
+  // then session, from `quest-window -s`. since is in the computer's seconds
+  // since the epoch, null for an agent interrupted at an unknown time.
+  property var agentStatuses: ({})
+  // When each Questmarchy window, by class, last lost the focus, in seconds
+  // since the epoch. A turn that ended later is pending.
+  property var seenTimes: ({})
+  readonly property string focusedClass:
+    ToplevelManager.activeToplevel ? ToplevelManager.activeToplevel.appId || "" : ""
+  // The window that had the focus before, so that losing it can be recorded.
+  property string lastFocusedClass: ""
+  // The classes of the open windows, as keys.
+  readonly property var openClasses: {
+    var classes = {}
+    ToplevelManager.toplevels.values.forEach(function(toplevel) {
+      if (toplevel.appId) classes[toplevel.appId] = true
+    })
+    return classes
+  }
+  // The theme's yellow and green, for running and pending agents; red is the
+  // shell's urgent color.
+  property color yellow: "#d8a657"
+  property color green: "#a9b665"
+  readonly property string themePalette: [Commons.Color.foreground, Commons.Color.background,
+    Commons.Color.accent, Commons.Color.urgent].join(" ")
   property bool refreshing: false
   property bool refreshFailed: false
   // "projects" or "quests". Kept between openings.
@@ -68,25 +100,34 @@ Panel {
   // Each entry has a title, the realm and the world's computer that its
   // second line names, either of them empty, its group ("projects" or
   // "quests"), the quest-window arguments that open it, and when its window
-  // was last opened.
+  // was last opened. Its computer, its windows' class, and its sessions' names
+  // before their numbers find its windows and agents.
   readonly property var projectEntries: byOpened(projects.filter(listed).map(function(project) {
+    var machine = worldsByName[project.world].label
     return {
       title: project.name,
       realm: "",
-      world: showComputers ? worldsByName[project.world].label : "",
+      world: showComputers ? machine : "",
       group: "projects",
       args: ["-w", project.world, project.name],
-      opened: windowTimes.projects[openedKey(project.world, project.name)] || 0
+      opened: windowTimes.projects[openedKey(project.world, project.name)] || 0,
+      machine: machine,
+      windowClass: "TUI.questmarchy." + machine + "." + project.name,
+      sessionPrefix: "questmarchy:" + project.name + ":"
     }
   }))
   readonly property var questEntries: byOpened(quests.filter(listed).map(function(quest) {
+    var machine = worldsByName[quest.world].label
     return {
       title: quest.slug,
       realm: quest.project,
-      world: showComputers ? worldsByName[quest.world].label : "",
+      world: showComputers ? machine : "",
       group: "quests",
       args: ["-w", quest.world, quest.project, quest.slug],
-      opened: windowTimes.quests[openedKey(quest.world, quest.project, quest.slug)] || 0
+      opened: windowTimes.quests[openedKey(quest.world, quest.project, quest.slug)] || 0,
+      machine: machine,
+      windowClass: "TUI.questmarchy." + machine + "." + quest.project + "." + quest.slug,
+      sessionPrefix: "questmarchy:" + quest.project + ":" + quest.slug + ":"
     }
   }))
   // The active tab's entries or, while searching, the projects and then the
@@ -134,6 +175,12 @@ Panel {
     refresh()
     Qt.callLater(function() { if (panel.loadedContent) panel.loadedContent.forceActiveFocus() })
   }
+  onFocusedClassChanged: {
+    if (lastFocusedClass.indexOf("TUI.questmarchy.") === 0) markSeen(lastFocusedClass)
+    lastFocusedClass = focusedClass
+  }
+  onThemePaletteChanged: themeColors.reload()
+  Component.onCompleted: lastFocusedClass = focusedClass
   onQueryChanged: cursorIndex = 0
   onTabChanged: cursorIndex = 0
   onMatchesChanged: cursorIndex = Math.max(0, Math.min(cursorIndex, matches.length - 1))
@@ -198,6 +245,105 @@ Panel {
         times.quests[openedKey(entry.place, entry.project, entry.slug)] = entry.opened
     })
     windowTimes = times
+  }
+
+  // What an entry's icon shows: "interrupted" when an agent of its stopped in
+  // the middle of a turn, "running" while one works, "pending" when one's
+  // turn ended, or it asks something, after its window last had the focus,
+  // "active" while its window is open, or else "inactive".
+  function entryState(entry) {
+    var sessions = agentStatuses[entry.machine] || {}
+    var seen = entry.windowClass === focusedClass ? Infinity : seenTimes[entry.windowClass] || 0
+    var rank = { inactive: 0, active: 1, pending: 2, running: 3, interrupted: 4 }
+    var state = openClasses[entry.windowClass] ? "active" : "inactive"
+    for (var name in sessions) {
+      if (name.indexOf(entry.sessionPrefix) !== 0
+          || !/^[1-9][0-9]*$/.test(name.slice(entry.sessionPrefix.length))) continue
+      var status = sessions[name]
+      if (!status) continue
+      var shown = status.state === "interrupted" || status.state === "running" ? status.state
+        : status.since > seen ? "pending" : ""
+      if (shown && rank[shown] > rank[state]) state = shown
+    }
+    return state
+  }
+
+  function stateColor(state) {
+    if (state === "interrupted") return Commons.Color.urgent
+    if (state === "running") return yellow
+    if (state === "pending") return green
+    return state === "active" ? foreground : dim
+  }
+
+  // Records that the window lost the focus now.
+  function markSeen(windowClass) {
+    var times = Object.assign({}, seenTimes)
+    times[windowClass] = Date.now() / 1000
+    seenTimes = times
+    seenFile.setText(JSON.stringify(times) + "\n")
+  }
+
+  function loadSeen(text) {
+    var times = {}
+    var record = null
+    try { record = JSON.parse(text) } catch (e) {}
+    if (record && typeof record === "object" && !Array.isArray(record)) {
+      for (var windowClass in record) {
+        if (typeof record[windowClass] === "number") times[windowClass] = record[windowClass]
+      }
+    }
+    seenTimes = times
+  }
+
+  // Takes the theme's yellow and green from its colors.toml, by name or as
+  // its terminal colors 3 and 2.
+  function loadThemeColors(text) {
+    var colors = {}
+    String(text || "").split("\n").forEach(function(line) {
+      var match = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?(#[0-9A-Fa-f]{6})/)
+      if (match) colors[match[1]] = match[2]
+    })
+    if (colors.yellow || colors.color3) yellow = colors.yellow || colors.color3
+    if (colors.green || colors.color2) green = colors.green || colors.color2
+  }
+
+  // The statuses in quest-window's JSON, {hosts: [{host, sessions: [{session,
+  // state, since}]}], failed: [<host>]}, as {statuses, failed}, with statuses
+  // by computer and then session; null when the text holds none.
+  function parseStatuses(text) {
+    var data = null
+    try { data = JSON.parse(text) } catch (e) {}
+    if (!data || !Array.isArray(data.hosts)) return null
+    var statuses = {}
+    data.hosts.forEach(function(host) {
+      if (!host || typeof host.host !== "string" || !Array.isArray(host.sessions)) return
+      var sessions = {}
+      host.sessions.forEach(function(session) {
+        if (session && typeof session.session === "string" && typeof session.state === "string")
+          sessions[session.session] = { state: session.state, since: session.since }
+      })
+      statuses[host.host] = sessions
+    })
+    return { statuses: statuses, failed: Array.isArray(data.failed) ? data.failed : [] }
+  }
+
+  // Takes the statuses from quest-window, with the last ones of the computers
+  // it could not reach, and writes them to the cache for the instances on the
+  // other monitors.
+  function finishStatuses(text) {
+    var parsed = parseStatuses(text)
+    if (!parsed) return
+    parsed.failed.forEach(function(host) {
+      if (agentStatuses[host]) parsed.statuses[host] = agentStatuses[host]
+    })
+    agentStatuses = parsed.statuses
+    statusCache.setText(JSON.stringify(parsed.statuses) + "\n")
+  }
+
+  function loadStatuses(text) {
+    var statuses = null
+    try { statuses = JSON.parse(text) } catch (e) {}
+    agentStatuses = statuses && typeof statuses === "object" && !Array.isArray(statuses) ? statuses : {}
   }
 
   // By the given fields, in order.
@@ -331,6 +477,38 @@ Panel {
     onLoaded: root.loadOpened(text())
   }
 
+  // Written whole, so watchers never read a partial file.
+  FileView {
+    id: statusCache
+    path: root.statusPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.loadStatuses(text())
+  }
+
+  // Written by the instance on each monitor, each of which sees the focus
+  // change, so they write the same.
+  FileView {
+    id: seenFile
+    path: root.seenPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.loadSeen(text())
+  }
+
+  // The shell reads the theme's colors once and is told of a new theme, so
+  // this is read again when the shell's palette changes.
+  FileView {
+    id: themeColors
+    path: Commons.Color.currentThemePath + "/colors.toml"
+    printErrors: false
+    onLoaded: root.loadThemeColors(text())
+  }
+
   FileView {
     path: "/etc/hostname"
     printErrors: false
@@ -361,6 +539,34 @@ Panel {
       refresher.running = false
       root.refreshing = false
       root.refreshFailed = true
+    }
+  }
+
+  // Makes the cache's directory for finishStatuses to write in.
+  Process {
+    id: statusFetcher
+    property real started: 0
+    command: ["bash", "-lc", 'mkdir -p "${1%/*}" && exec bash "$2" -s', "bash", root.statusPath, root.questWindow]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.finishStatuses(text)
+    }
+  }
+
+  // Asks for the statuses when the panel opens, and again every few seconds
+  // while it is open, giving up on an ask that hangs.
+  Timer {
+    interval: 3000
+    repeat: true
+    running: root.opened
+    triggeredOnStart: true
+    onTriggered: {
+      if (statusFetcher.running) {
+        if (Date.now() - statusFetcher.started > 30000) statusFetcher.running = false
+        return
+      }
+      statusFetcher.started = Date.now()
+      statusFetcher.running = true
     }
   }
 
@@ -570,11 +776,6 @@ Panel {
   }
 
   Component {
-    id: questIcon
-    SwordIcon { color: root.dim }
-  }
-
-  Component {
     id: worldIcon
     GlobeIcon { color: root.dim }
   }
@@ -618,6 +819,7 @@ Panel {
     id: row
     property var entry: null
     property int rowIndex: 0
+    readonly property color iconColor: entry ? root.stateColor(root.entryState(entry)) : root.dim
 
     hasCursor: root.cursorIndex === rowIndex
     foreground: root.foreground
@@ -632,14 +834,24 @@ Panel {
     }
 
     // A flag for a project and a sword for a quest, as on their tabs, at the
-    // row's right end and colored like the network panel's signal icons.
+    // row's right end, colored by its window and agent.
     GridIcon {
       id: rowIcon
       anchors.right: parent.right
       anchors.rightMargin: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
       size: Style.font.title * 0.8
-      icon: row.entry && row.entry.group === "projects" ? realmIcon : questIcon
+      icon: row.entry && row.entry.group === "projects" ? rowRealmIcon : rowQuestIcon
+    }
+
+    Component {
+      id: rowRealmIcon
+      FlagIcon { color: row.iconColor }
+    }
+
+    Component {
+      id: rowQuestIcon
+      SwordIcon { color: row.iconColor }
     }
 
     Column {

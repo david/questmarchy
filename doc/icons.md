@@ -37,6 +37,9 @@ There are two ways to size an icon, both in `Questmarchy.qml`:
   title does.
 - An icon takes its text's color: `root.dim` on the second line,
   `root.foreground` beside the title, the accent on the tabs.
+- The icon at a row's right end takes its color from `stateColor`, by what
+  `entryState` says of the row's window and agent. EntryRow declares its own
+  icon components, so that each binds to its row's color.
 
 ## Pitfall
 

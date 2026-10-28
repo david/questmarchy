@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+# agent-status: keep the status of the agent in a Questmarchy session, which
+# colors its sword in the bar widget's panel. Claude's hooks run it with the
+# hook's input on standard input. The status is one of:
+#
+#   running      a turn is under way, or background work the turn started
+#   waiting      the agent asks the user, for a permission or with a question
+#   done         the turn ended
+#   interrupted  the agent was running or waiting when it stopped, as when its
+#                host restarted
+#
+# sessionctl status reads the statuses where the session lives, and the widget
+# reads them from there.
+#
+# Like link-session, it does nothing without QUESTMARCHY_SESSION, which names
+# the status file as <mux>/<session>. It is Python, since its status file is
+# JSON and a host has python3 for the quest command, but need not have jq.
+
+# Annotations stay unevaluated, so Python 3.9, as on macOS, accepts X | None.
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import time
+
+
+def next_state(event: str, hook: dict, state: str) -> str | None:
+    """The status after the hook's event, given the current one, which is
+    empty when there is none; None to drop it."""
+    if event == "SessionStart":
+        # A new process means that a turn under way died with the last one. A
+        # cleared or compacted conversation keeps its process.
+        if hook.get("source") in ("startup", "resume", "fork") and state in ("running", "waiting"):
+            return "interrupted"
+        return state
+    if event == "UserPromptSubmit":
+        return "running"
+    # PreToolUse runs only for AskUserQuestion; see hooks.json.
+    if event in ("PreToolUse", "PermissionRequest"):
+        return "waiting"
+    # The user answered, or the tool needed no answer.
+    if event in ("PostToolUse", "PostToolUseFailure"):
+        return "running"
+    # The turn ended, but background work it started still runs, and wakes
+    # the agent when it ends.
+    if event == "Stop":
+        return "running" if hook.get("background_tasks") else "done"
+    if event == "StopFailure":
+        return "done"
+    # Only on /exit and /logout, as for the session's link; see hooks.json.
+    if event == "SessionEnd":
+        return None
+    return state
+
+
+def main() -> int:
+    session = os.environ.get("QUESTMARCHY_SESSION", "")
+    names = re.fullmatch(r"([^/.][^/]*)/([^/.][^/]*)", session)
+    if not names:
+        return 0
+    try:
+        hook = json.load(sys.stdin)
+        event = hook["hook_event_name"]
+    except (ValueError, LookupError, TypeError):
+        return 0
+
+    # Not under XDG_STATE_HOME, which the shell that sessionctl runs in may not
+    # set.
+    directory = Path.home() / ".local/state/questmarchy/status" / names.group(1)
+    path = directory / f"{names.group(2)}.json"
+    directory.mkdir(parents=True, exist_ok=True)
+    # Hooks for tools that run at once run at once too, so each takes the
+    # session's lock to read and write the status.
+    lock_path = directory / f".{names.group(2)}.lock"
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            status = json.loads(path.read_text(encoding="utf-8"))
+            state = status["state"]
+        except (OSError, ValueError, LookupError, TypeError):
+            status, state = {}, ""
+        new = next_state(event, hook, state if isinstance(state, str) else "")
+        if new is None:
+            path.unlink(missing_ok=True)
+            lock_path.unlink(missing_ok=True)
+            return 0
+        # Each turn that ends is new to the user, even after one that ended
+        # without their looking.
+        if not new or (new == state and event not in ("Stop", "StopFailure")):
+            return 0
+        # since is when the status began, in the host's seconds since the
+        # epoch. The transcript lets sessionctl see that the user interrupted a
+        # turn, which no hook reports.
+        status = {"state": new, "since": time.time(),
+                  "transcript": hook.get("transcript_path") or status.get("transcript", "")}
+        # Replaced whole, so that sessionctl never reads part of it.
+        tmp = directory / f".{names.group(2)}.json.tmp"
+        tmp.write_text(json.dumps(status) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

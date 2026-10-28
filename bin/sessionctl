@@ -3,8 +3,9 @@
 # project lives, on a host or on this computer. quest-window runs `sessionctl
 # prepare` to choose the shpool sessions to open windows for, and quest-session
 # runs `sessionctl attach` in each window, to attach to its session or create
-# it, resuming the conversation linked to it. On a host, both run the copy in
-# ~/.local/share/questmarchy/bin, which quest-window keeps the same as the
+# it, resuming the conversation linked to it. `quest-window -s` runs `sessionctl
+# status` for the status of each session's agent. On a host, they run the copy
+# in ~/.local/share/questmarchy/bin, which quest-window keeps the same as the
 # plugin's, from a login shell, whose profile puts python3, shpool, and the
 # agent on PATH wherever they are installed. On this computer they run the
 # plugin's own. It is Python because a host has python3 for the quest command,
@@ -14,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -28,6 +30,9 @@ from typing import NoReturn
 # The links between sessions and conversations, which the hooks of
 # Questmarchy's plugin for Claude Code keep; see claude-plugin/hooks/link-session.
 LINKS = Path.home() / ".local/state/questmarchy/sessions/shpool"
+# The statuses of the sessions' agents, which the same plugin's hooks keep; see
+# claude-plugin/hooks/agent-status.
+STATUSES = Path.home() / ".local/state/questmarchy/status/shpool"
 
 
 def fail(message: str) -> NoReturn:
@@ -109,6 +114,80 @@ def prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+def interrupted_by_user(transcript: str, since: float) -> bool:
+    """Whether the user interrupted the conversation's turn after the given
+    time, which no hook reports: Claude then ends the transcript with a message
+    of its own from the user."""
+    try:
+        with open(transcript, "rb") as file:
+            file.seek(0, os.SEEK_END)
+            file.seek(max(0, file.tell() - 65536))
+            lines = file.read().decode("utf-8", "replace").splitlines()
+    except (OSError, TypeError, ValueError):
+        return False
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("type") not in ("user", "assistant") \
+                or entry.get("isSidechain"):
+            continue
+        if entry["type"] != "user":
+            return False
+        try:
+            content = entry["message"]["content"]
+            texts = [content] if isinstance(content, str) else \
+                [block.get("text", "") for block in content if isinstance(block, dict)]
+            # Python 3.9 reads no Z for UTC.
+            at = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00")).timestamp()
+        except (LookupError, TypeError, ValueError, AttributeError):
+            return False
+        return at >= since and any(isinstance(text, str) and text.startswith("[Request interrupted by user")
+                                   for text in texts)
+    return False
+
+
+def status(args: argparse.Namespace) -> int:
+    """Print {sessions: [{session, state, since}]} as JSON: the status of the
+    agent in each Questmarchy session that has one, as agent-status keeps it,
+    and since when, in seconds since the epoch. A session that was running or
+    waiting and is gone, as after a reboot, is interrupted, since an unknown
+    time, null; and a turn the user interrupted is left out."""
+    machine = os.uname().nodename
+    if not shutil.which("shpool"):
+        fail(f"shpool is not on PATH on {machine}")
+    listing = subprocess.run(["shpool", "list", "--json"], stdout=subprocess.PIPE, text=True)
+    if listing.returncode:
+        fail(f"shpool list failed on {machine}")
+    try:
+        alive = {session["name"] for session in json.loads(listing.stdout)["sessions"]}
+    except (ValueError, LookupError, TypeError):
+        fail(f"could not read the sessions shpool listed on {machine}")
+    try:
+        names = sorted(name for name in os.listdir(STATUSES)
+                       if name.startswith("questmarchy:") and name.endswith(".json"))
+    except OSError:
+        names = []
+    sessions = []
+    for name in names:
+        session = name[:-len(".json")]
+        try:
+            record = json.loads((STATUSES / name).read_text(encoding="utf-8"))
+            state, since = record["state"], float(record["since"])
+        except (OSError, ValueError, LookupError, TypeError):
+            continue
+        if state not in ("running", "waiting", "done", "interrupted"):
+            continue
+        if state in ("running", "waiting") and session not in alive:
+            state, since = "interrupted", None
+        elif state == "running" and interrupted_by_user(record.get("transcript"), since):
+            continue
+        sessions.append({"session": session, "state": state, "since": since})
+    print(json.dumps({"sessions": sessions}))
+    return 0
+
+
 def linked_conversation(session: str) -> tuple[str, str] | None:
     """The ID and transcript path of the Claude conversation linked to the
     session, or None when it has no link, or one that names no conversation."""
@@ -166,7 +245,8 @@ def attach(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Choose the shpool sessions to open Questmarchy windows for, or attach to one.")
+        description="Choose the shpool sessions to open Questmarchy windows for, attach to one, "
+                    "or print the status of their agents.")
     commands = parser.add_subparsers(dest="command", required=True, metavar="command")
 
     prepare_parser = commands.add_parser(
@@ -188,6 +268,12 @@ def main() -> int:
     attach_parser.add_argument("dir", help="the directory a new session starts in")
     attach_parser.add_argument("agent", nargs="?", default="", help="the agent a new session starts")
     attach_parser.set_defaults(run=attach)
+
+    status_parser = commands.add_parser(
+        "status", help="print the status of each session's agent as JSON",
+        description="Print {sessions: [{session, state, since}]} as JSON: the status of the "
+                    "agent in each Questmarchy session that has one. Change nothing.")
+    status_parser.set_defaults(run=status)
 
     args = parser.parse_args()
     return args.run(args)

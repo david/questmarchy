@@ -1,10 +1,61 @@
 {
-  "description": "Keep the link between a Questmarchy session and the conversation running in it",
+  "description": "Keep the link between a Questmarchy session and the conversation running in it, and the status of its agent",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/link-session", "save"] }
+          { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/link-session", "save"] },
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
         ]
       }
     ],
@@ -12,7 +63,8 @@
       {
         "matcher": "prompt_input_exit|logout",
         "hooks": [
-          { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/link-session", "drop"] }
+          { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/link-session", "drop"] },
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/agent-status"] }
         ]
       }
     ]
