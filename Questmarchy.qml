@@ -631,21 +631,21 @@ Panel {
       onClicked: root.activate(row.rowIndex)
     }
 
-    // A flag for a project and a sword for a quest, as on their tabs, sized
-    // and colored like the network panel's signal icons.
+    // A flag for a project and a sword for a quest, as on their tabs, at the
+    // row's right end and colored like the network panel's signal icons.
     GridIcon {
       id: rowIcon
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(10)
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
-      size: Style.font.title
+      size: Style.font.title * 0.8
       icon: row.entry && row.entry.group === "projects" ? realmIcon : questIcon
     }
 
     Column {
       id: lines
-      anchors.left: rowIcon.right
-      anchors.right: parent.right
+      anchors.left: parent.left
+      anchors.right: rowIcon.left
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)

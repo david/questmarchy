@@ -15,8 +15,8 @@ There are two ways to size an icon, both in `Questmarchy.qml`:
 
 - `GridIcon` scales the whole 24-unit grid to a box of `size × 1.25`, so the
   grid's margin makes the icon look as large as a glyph of `size`. Used for
-  standalone icons: each row's leading icon (`Style.font.title`) and the tab
-  icons (`Style.font.heading`).
+  standalone icons: the icon at each row's right end (0.8 of
+  `Style.font.title`) and the tab icons (`Style.font.heading`).
 - `FittedIcon` scales the icon's outline (`Shape.boundingRect`) to its
   `height`, with no margin. Used for icons beside text, at
   `Math.round(font.pixelSize * 0.875)`: a little taller than the letters.
