@@ -38,7 +38,9 @@ There are two ways to size an icon, both in `Questmarchy.qml`:
 - An icon takes its text's color: `root.dim` on the second line,
   `root.foreground` beside the title, the accent on the tabs.
 - The icon at a row's right end takes its color from `stateColor`, by what
-  `entryState` says of the row's window and agent. EntryRow declares its own
+  `entryState` says of the row's window and agent. For an agent's status,
+  that color goes to a disc filling the `GridIcon` box instead, and the icon,
+  at 0.8 of its size, takes the disc's color darkened to near black. EntryRow declares its own
   icon components, so that each binds to its row's color.
 
 ## Pitfall

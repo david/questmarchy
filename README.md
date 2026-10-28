@@ -163,15 +163,16 @@ has no transcript to resume, so Claude starts fresh instead.
 
 ## Agent status
 
-The flag or sword at the right of each row shows, first match wins:
+The flag or sword at the right of each row shows, first match wins. An
+agent's status puts it, near black, on a colored disc:
 
-| Color | When |
+| Shows | When |
 | --- | --- |
-| Red | An agent stopped in the middle of a turn, as when its computer restarted. It stays red until it is given a new prompt. |
-| Yellow | An agent is working, or background work it started still runs. |
-| Green | An agent's turn ended, or it asks for a permission or an answer, after its window last had the focus. |
-| Bright | A window is open. |
-| Dim | No window is open. |
+| Red disc | An agent stopped in the middle of a turn, as when its computer restarted. It stays red until it is given a new prompt. |
+| Yellow disc | An agent is working, or background work it started still runs. |
+| Green disc | An agent's turn ended, or it asks for a permission or an answer, after its window last had the focus. |
+| Bright icon | A window is open. |
+| Dim icon | No window is open. |
 
 Each row counts its own sessions: a project's, `questmarchy:<project>:<n>`,
 or a quest's, `questmarchy:<project>:<slug>:<n>`. An agent keeps its status
