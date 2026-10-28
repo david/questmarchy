@@ -250,8 +250,9 @@ does not put `bin/` on its Bash tool's `PATH`. Check it with `claude plugin
 validate .`, and try a change with `claude --plugin-dir claude-plugin` and
 `QUESTMARCHY_SESSION` set.
 
-`assets/sword.svg` and `assets/flag.svg` are the icons' source art.
-`SwordIcon.qml` and `FlagIcon.qml` hold copies of their path data.
+`assets/sword.svg`, `assets/flag.svg`, and `assets/globe.svg` are the icons'
+source art. `SwordIcon.qml`, `FlagIcon.qml`, and `GlobeIcon.qml` hold copies
+of their path data.
 
 ## License
 

@@ -65,13 +65,15 @@ Panel {
   // Index into matches of the highlighted entry.
   property int cursorIndex: 0
   readonly property bool searching: query.trim() !== ""
-  // Each entry has a title, an optional second line, its group ("projects"
-  // or "quests"), the quest-window arguments that open it, and when its
-  // window was last opened.
+  // Each entry has a title, the realm and the world's computer that its
+  // second line names, either of them empty, its group ("projects" or
+  // "quests"), the quest-window arguments that open it, and when its window
+  // was last opened.
   readonly property var projectEntries: byOpened(projects.filter(listed).map(function(project) {
     return {
       title: project.name,
-      subtitle: showComputers ? worldsByName[project.world].label : "",
+      realm: "",
+      world: showComputers ? worldsByName[project.world].label : "",
       group: "projects",
       args: ["-w", project.world, project.name],
       opened: windowTimes.projects[openedKey(project.world, project.name)] || 0
@@ -80,7 +82,8 @@ Panel {
   readonly property var questEntries: byOpened(quests.filter(listed).map(function(quest) {
     return {
       title: quest.slug,
-      subtitle: quest.project + (showComputers ? " · " + worldsByName[quest.world].label : ""),
+      realm: quest.project,
+      world: showComputers ? worldsByName[quest.world].label : "",
       group: "quests",
       args: ["-w", quest.world, quest.project, quest.slug],
       opened: windowTimes.quests[openedKey(quest.world, quest.project, quest.slug)] || 0
@@ -407,23 +410,14 @@ Panel {
             text: title.text
           }
 
-          Item {
+          FittedIcon {
             id: sword
             x: search.leftPadding
             anchors.verticalCenter: parent.top
             anchors.verticalCenterOffset: title.baselineOffset + titleMetrics.tightBoundingRect.y
               + titleMetrics.tightBoundingRect.height / 2
             height: Math.round(title.font.pixelSize * 0.875)
-            width: Math.round(swordShape.boundingRect.width * swordShape.scale)
-
-            SwordIcon {
-              id: swordShape
-              color: root.foreground
-              transformOrigin: Item.TopLeft
-              scale: sword.height / boundingRect.height
-              x: -boundingRect.x * scale
-              y: -boundingRect.y * scale
-            }
+            icon: Component { SwordIcon { color: root.foreground } }
           }
 
           Text {
@@ -580,6 +574,29 @@ Panel {
     SwordIcon { color: root.dim }
   }
 
+  Component {
+    id: worldIcon
+    GlobeIcon { color: root.dim }
+  }
+
+  // An icon scaled to the given height and fitted to its outline, without
+  // the margin that its grid leaves.
+  component FittedIcon: Item {
+    id: fittedIcon
+    property Component icon: null
+
+    width: shape.item ? Math.round(shape.item.boundingRect.width * shape.scale) : 0
+
+    Loader {
+      id: shape
+      sourceComponent: fittedIcon.icon
+      transformOrigin: Item.TopLeft
+      scale: item ? fittedIcon.height / item.boundingRect.height : 1
+      x: item ? -item.boundingRect.x * scale : 0
+      y: item ? -item.boundingRect.y * scale : 0
+    }
+  }
+
   // An icon drawn on a 24-unit grid, scaled so that it looks about as large
   // as a glyph of the given font size: the grid leaves a margin around it.
   component GridIcon: Item {
@@ -644,16 +661,58 @@ Panel {
         elide: Text.ElideRight
       }
 
-      Text {
-        visible: text !== ""
+      // The realm, then the world's computer, which is elided first.
+      Row {
+        id: details
+        visible: realmDetail.text !== "" || worldDetail.text !== ""
         width: parent.width
-        textFormat: Text.PlainText
-        text: row.entry ? row.entry.subtitle : ""
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
+        spacing: Style.space(10)
+
+        Detail {
+          id: realmDetail
+          icon: realmIcon
+          text: row.entry ? row.entry.realm : ""
+          maxWidth: details.width
+        }
+
+        Detail {
+          id: worldDetail
+          icon: worldIcon
+          text: row.entry ? row.entry.world : ""
+          maxWidth: details.width - (realmDetail.text !== "" ? realmDetail.width + details.spacing : 0)
+        }
       }
+    }
+  }
+
+  // An icon and a caption on an entry's second line, the icon a little taller
+  // than the caption's letters, as the sword is beside the title.
+  component Detail: Row {
+    id: detail
+    property Component icon: null
+    property string text: ""
+    // The detail's text is elided to keep it this wide at most.
+    property real maxWidth: 0
+
+    visible: text !== ""
+    spacing: Style.space(4)
+
+    FittedIcon {
+      id: detailIcon
+      anchors.verticalCenter: parent.verticalCenter
+      height: Math.round(detailText.font.pixelSize * 0.875)
+      icon: detail.icon
+    }
+
+    Text {
+      id: detailText
+      width: Math.max(0, Math.min(implicitWidth, detail.maxWidth - detailIcon.width - detail.spacing))
+      textFormat: Text.PlainText
+      text: detail.text
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      elide: Text.ElideRight
     }
   }
 }
