@@ -394,31 +394,59 @@ Panel {
         width: parent.width
         spacing: Style.space(12)
 
-        // The sword, then the search field in the rest of the row, like the
-        // icon and title of a first-party panel's header.
+        // The sword and a title over the search field. The sword is fitted
+        // to its outline, a little taller than the title's letters and
+        // centered on them, with its left edge over the field's text.
         Item {
           width: parent.width
-          implicitHeight: Math.max(sword.height, search.implicitHeight)
+          implicitHeight: title.implicitHeight
 
-          SwordIcon {
+          TextMetrics {
+            id: titleMetrics
+            font: title.font
+            text: title.text
+          }
+
+          Item {
             id: sword
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            color: root.foreground
+            x: search.leftPadding
+            anchors.verticalCenter: parent.top
+            anchors.verticalCenterOffset: title.baselineOffset + titleMetrics.tightBoundingRect.y
+              + titleMetrics.tightBoundingRect.height / 2
+            height: Math.round(title.font.pixelSize * 0.875)
+            width: Math.round(swordShape.boundingRect.width * swordShape.scale)
+
+            SwordIcon {
+              id: swordShape
+              color: root.foreground
+              transformOrigin: Item.TopLeft
+              scale: sword.height / boundingRect.height
+              x: -boundingRect.x * scale
+              y: -boundingRect.y * scale
+            }
           }
 
-          TextField {
-            id: search
+          Text {
+            id: title
             anchors.left: sword.right
-            anchors.leftMargin: Style.space(14)
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            focus: true
-            foreground: root.foreground
-            placeholderText: strings.t("search")
-            onTextChanged: root.query = text
-            Keys.onPressed: function(event) { root.handleKey(event, search) }
+            anchors.leftMargin: Style.space(12)
+            textFormat: Text.PlainText
+            text: strings.t("searchTitle")
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
           }
+        }
+
+        TextField {
+          id: search
+          width: parent.width
+          focus: true
+          foreground: root.foreground
+          placeholderText: strings.t("search")
+          onTextChanged: root.query = text
+          Keys.onPressed: function(event) { root.handleKey(event, search) }
         }
 
         PanelSeparator {
