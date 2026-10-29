@@ -12,16 +12,13 @@ Shape {
   height: 24
   preferredRendererType: Shape.CurveRenderer
 
-  // The blade, with its fuller cut out.
+  // The blade.
   ShapePath {
     fillColor: root.color
-    fillRule: ShapePath.OddEvenFill
     strokeColor: "transparent"
     strokeWidth: 0
     PathSvg {
-      path: "M8.04 11.72 L13.98 5.78 Q15.96 3.80 20.06 3.94 Q20.20 8.04 18.22 10.02 L12.28 15.96 Z "
-        + "M16.53 7.47 Q17.13 8.08 16.53 8.68 L12.64 12.57 Q12.04 13.17 11.43 12.57 "
-        + "Q10.83 11.96 11.43 11.36 L15.32 7.47 Q15.92 6.87 16.53 7.47 Z"
+      path: "M8.04 11.72 L13.98 5.78 Q15.96 3.80 20.06 3.94 Q20.20 8.04 18.22 10.02 L12.28 15.96 Z"
     }
   }
 

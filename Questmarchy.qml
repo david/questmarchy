@@ -800,26 +800,18 @@ Panel {
 
   // An icon drawn on a 24-unit grid, scaled so that it looks about as large
   // as a glyph of the given font size: the grid leaves a margin around it.
-  // Given a disc color, it sits smaller on a disc that fills its box.
   component GridIcon: Item {
     id: gridIcon
     property Component icon: null
     property real size: Style.font.body
-    property color disc: "transparent"
 
     width: Math.round(size * 1.25)
     height: width
 
-    Rectangle {
-      anchors.fill: parent
-      radius: width / 2
-      color: gridIcon.disc
-    }
-
     Loader {
       anchors.centerIn: parent
       sourceComponent: gridIcon.icon
-      scale: gridIcon.width / 24 * (gridIcon.disc.a > 0 ? 0.8 : 1)
+      scale: gridIcon.width / 24
     }
   }
 
@@ -827,12 +819,7 @@ Panel {
     id: row
     property var entry: null
     property int rowIndex: 0
-    readonly property string iconState: entry ? root.entryState(entry) : "inactive"
-    // An agent's status puts the icon, near black, on a disc of its color.
-    readonly property color discColor: iconState === "inactive" || iconState === "active"
-      ? "transparent" : root.stateColor(iconState)
-    readonly property color iconColor: discColor.a > 0 ? Qt.darker(discColor, 4)
-      : root.stateColor(iconState)
+    readonly property color iconColor: entry ? root.stateColor(root.entryState(entry)) : root.dim
 
     hasCursor: root.cursorIndex === rowIndex
     foreground: root.foreground
@@ -854,7 +841,6 @@ Panel {
       anchors.rightMargin: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
       size: Style.font.title * 0.8
-      disc: row.discColor
       icon: row.entry && row.entry.group === "projects" ? rowRealmIcon : rowQuestIcon
     }
 
