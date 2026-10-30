@@ -59,20 +59,20 @@ attach() {
 # drops, and otherwise with the session's status. A crash or a dropped
 # connection can leave the old client attached, looking like a live one, so
 # every attempt forces it off: quest-window opens this window only when this
-# computer has no other for the session. sessionctl exits with 254 when this
-# terminal was forced off a session that goes on, as when it was opened on
-# another computer: the window waits, since it must not force it back unasked.
+# computer has no other for the session. sessionctl says why and exits with 254
+# when this terminal was forced off a session that goes on, as when it was opened
+# on another computer: the window waits, since it must not force it back unasked.
 # On this computer, there is no connection to lose.
 while :; do
   attach -f "$session" "$dir" "$agent"
   status=$?
   if (( status == 254 )); then
-    printf '\nThis session was detached, probably because it was opened on another computer.\nPress any key to take it back here, or close this window to leave it.\n'
+    printf 'Press any key to take it back here, or close this window to leave it.\n'
     read -rsn1
     continue
   fi
   if [[ -z $host ]] || (( status != 255 )); then
-    (( status == 0 )) || hold "The session ended with status $status."
+    (( status == 0 )) || hold "The session ended with an error (status $status)."
     exit "$status"
   fi
   printf '\nLost the connection to %s. Reconnecting; press any key to close instead.\n' "$host"

@@ -260,6 +260,7 @@ def attach(args: argparse.Namespace) -> int:
     except OSError as error:
         fail(f"could not run shpool: {error.strerror}")
     if status == 0 and goes_on(args.session):
+        print("\nThis session was detached, probably because it was opened on another computer.")
         return DETACHED
     return status if status >= 0 else 128 - status
 
