@@ -111,7 +111,8 @@ These windows open only when this computer has none for the project or quest,
 so each takes over its session from any terminal attached to it. After a crash
 here, a host can still count the lost terminals as attached, and can't tell
 them from live ones, so opening the quest brings its sessions back. A window
-open on another computer loses its session, and closes.
+open on another computer loses its session: it says so and stays open, and
+pressing a key takes the session back.
 
 A new session starts the default agent on this computer (`omarchy default
 agent`) as its own command where the project lives, such as `codex`, with no
@@ -268,8 +269,8 @@ project or quest would do.
 
 `attach` attaches to the session, with `-f` forcing off the terminal attached
 to it, or creates it in `<dir>`, resuming its linked conversation or running
-`<agent>`. It becomes `shpool attach`, so that the window gets the session's
-status.
+`<agent>`. It runs `shpool attach` and exits with the session's status, or with
+254 when the terminal was forced off a session that goes on.
 
 `status` prints `{sessions: [{session, state, since}]}` as JSON: the status
 of the agent in each Questmarchy session that has one, as [Agent

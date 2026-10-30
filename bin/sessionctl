@@ -22,8 +22,10 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from typing import NoReturn
 
 
@@ -33,6 +35,9 @@ LINKS = Path.home() / ".local/state/questmarchy/sessions/shpool"
 # The statuses of the sessions' agents, which the same plugin's hooks keep; see
 # claude-plugin/hooks/agent-status.
 STATUSES = Path.home() / ".local/state/questmarchy/status/shpool"
+# The status of attach when the terminal left a session that goes on, as when it
+# was opened on another computer. quest-session then offers to take it back.
+DETACHED = 254
 
 
 def fail(message: str) -> NoReturn:
@@ -202,10 +207,25 @@ def linked_conversation(session: str) -> tuple[str, str] | None:
     return None
 
 
+def goes_on(session: str) -> bool:
+    """Whether the session is still there after its terminal's client exited.
+    shpool takes a moment to stop listing one that ended, so give it time."""
+    for _ in range(20):
+        listing = subprocess.run(["shpool", "list", "--json"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, text=True)
+        try:
+            if session not in [entry["name"] for entry in json.loads(listing.stdout)["sessions"]]:
+                return False
+        except (ValueError, LookupError, TypeError):
+            return False
+        time.sleep(0.1)
+    return True
+
+
 def attach(args: argparse.Namespace) -> int:
     """Attach to the session, or create it in the directory, resuming the
     conversation linked to it, or else running the agent, or the default shell
-    without one."""
+    without one. Return the session's status, or DETACHED."""
     # The agent runs from an interactive login shell, whose profile puts it on
     # PATH wherever it is installed, and whose rc sets up the environment a
     # terminal would have, such as mise's per-directory variables. Claude runs
@@ -231,11 +251,17 @@ def attach(args: argparse.Namespace) -> int:
     if args.force:
         command.append("-f")
     command.append(args.session)
-    # Replaced by shpool, so that the window gets the session's status.
+    # Waited for, not replaced by shpool, since shpool exits with 0 both when the
+    # session ends and when this terminal is forced off it. A handler, unlike
+    # ignoring the signal, does not pass to shpool, which Ctrl+C should reach.
+    signal.signal(signal.SIGINT, lambda *_: None)
     try:
-        os.execvp(command[0], command)
+        status = subprocess.run(command).returncode
     except OSError as error:
         fail(f"could not run shpool: {error.strerror}")
+    if status == 0 and goes_on(args.session):
+        return DETACHED
+    return status if status >= 0 else 128 - status
 
 
 def main() -> int:
