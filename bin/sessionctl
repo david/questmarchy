@@ -68,10 +68,7 @@ def prepare(args: argparse.Namespace) -> int:
     if listing.returncode:
         fail(f"shpool list failed on {machine}")
     try:
-        sessions = json.loads(listing.stdout)["sessions"]
-        names = [session["name"] for session in sessions]
-        disconnected = [session["name"] for session in sessions
-                        if session["status"].lower() == "disconnected"]
+        names = [session["name"] for session in json.loads(listing.stdout)["sessions"]]
     except (ValueError, LookupError, TypeError, AttributeError):
         fail(f"could not read the sessions shpool listed on {machine}")
     try:
@@ -79,18 +76,16 @@ def prepare(args: argparse.Namespace) -> int:
     except OSError:
         links = []
 
-    # Each disconnected session, so that a closed window's agent is picked up
-    # again, and each linked one that shpool lost, so that its conversation is
-    # resumed; or, when there is neither, a new one with the lowest number free
-    # of both.
+    # Each listed session, so that a closed window's agent is picked up again,
+    # and each linked one that shpool lost, so that its conversation is resumed;
+    # or, when there is neither, a new one. A session that counts as attached is
+    # chosen too: quest-window asks only when its computer has no window for
+    # them, and a crash there leaves clients here that look like live ones.
     listed, linked = set(numbers(names, args.prefix)), set(numbers(links, args.prefix))
-    chosen = numbers(disconnected, args.prefix) + sorted(linked - listed)
+    chosen = sorted(listed | linked)
     notices = []
     if not chosen:
-        new = 1
-        while new in listed or new in linked:
-            new += 1
-        chosen = [new]
+        chosen = [1]
         # Only a new session starts the agent. A running session keeps its own,
         # a session whose agent exited while no window was attached is still
         # listed and starts it again, and a lost session is recreated with the

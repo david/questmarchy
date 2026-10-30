@@ -55,12 +55,14 @@ attach() {
 
 # sessionctl reads the session's link on each attempt, since the host may have
 # lost the session meanwhile. ssh exits with 255 when the connection fails or
-# drops, and otherwise with the session's status. A dropped connection can
-# leave the old client attached, so reconnecting forces it off. On this
-# computer, there is no connection to lose.
-force=()
+# drops, and otherwise with the session's status. A crash or a dropped
+# connection can leave the old client attached, looking like a live one, so
+# every attempt forces it off: quest-window opens this window only when this
+# computer has no other for the session. A client forced off exits with 0, so
+# its window closes and does not force back. On this computer, there is no
+# connection to lose.
 while :; do
-  attach "${force[@]}" "$session" "$dir" "$agent"
+  attach -f "$session" "$dir" "$agent"
   status=$?
   if [[ -z $host ]] || (( status != 255 )); then
     (( status == 0 )) || hold "The session ended with status $status."
@@ -68,5 +70,4 @@ while :; do
   fi
   printf '\nLost the connection to %s. Reconnecting; press any key to close instead.\n' "$host"
   read -rsn1 -t 5 && exit 0
-  force=(-f)
 done

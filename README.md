@@ -100,14 +100,18 @@ Omarchy's default terminal (`omarchy default terminal`), through
 `omarchy-launch-tui`. Omarchy tags `TUI.*` windows as terminals, so `Super+V`
 pastes in them.
 
-Opening a project or quest opens a window for each of its sessions that no
-terminal is attached to, so closing its windows and opening it again picks up
-the same agents. It also opens one for each session that shpool lost, as in a
-reboot, and that is linked to a conversation, and recreates the session
-resuming that conversation; see [Resuming
-conversations](#resuming-conversations). When there is neither, as when a
-terminal elsewhere holds every session, one window creates a session with the
-lowest number `<n>` that no session or link uses.
+Opening a project or quest opens a window for each of its sessions at once, so
+closing its windows and opening it again picks up the same agents. It also
+opens one for each session that shpool lost, as in a reboot, and that is linked
+to a conversation, and recreates the session resuming that conversation; see
+[Resuming conversations](#resuming-conversations). When there is neither, one
+window creates session 1.
+
+These windows open only when this computer has none for the project or quest,
+so each takes over its session from any terminal attached to it. After a crash
+here, a host can still count the lost terminals as attached, and can't tell
+them from live ones, so opening the quest brings its sessions back. A window
+open on another computer loses its session, and closes.
 
 A new session starts the default agent on this computer (`omarchy default
 agent`) as its own command where the project lives, such as `codex`, with no
@@ -119,8 +123,8 @@ the agent exits, the session ends and the window closes.
 The window runs `bin/quest-session`, which attaches with `shpool attach`
 through [`sessionctl`](#sessionctl) where the project lives, over
 `ssh -t <host>` for another host. When ssh loses the connection, the window
-says so and reconnects every few seconds, forcing off the old client that the
-host may still count as attached, until it gets through or a key is pressed.
+says so and reconnects every few seconds, until it gets through or a key is
+pressed.
 Each window has an SSH connection of its own, not one shared through a
 `ControlMaster`, so closing the window detaches its session at once. When the
 session ends with an error, the window stays open until a key is pressed, so

@@ -277,9 +277,11 @@ record_opened || true
 dir=$(answer .dir) agent=$(answer .agent)
 # Each window attaches to its session through quest-session. The launcher runs
 # it with xdg-terminal-exec -e, which still reads options such as -h in the
-# command, so quest-session takes none.
+# command, so quest-session takes none. The launcher lasts as long as its window,
+# so each runs in the background for the windows to open together.
 for session in "${sessions[@]}"; do
-  omarchy-launch-tui --app-id="$class" \
-    bash "$here/quest-session" "${host:-localhost}" "$session" "$dir" ${agent:+"$agent"} ||
-    notice "could not open a window for $session"
+  { omarchy-launch-tui --app-id="$class" \
+      bash "$here/quest-session" "${host:-localhost}" "$session" "$dir" ${agent:+"$agent"} ||
+      notice "could not open a window for $session"; } &
 done
+wait
